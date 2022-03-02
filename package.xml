@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+    <name>neo_mpc_planner2</name>
+    <version>1.0.0</version>
+    <description>
+
+        This package provides a spline based implementation to local robot navigation on a plane.
+
+    </description>
+    <author>Pradheep Padmanabhan</author>
+    <author>Padmanabhan@neobotix.de</author>
+    <maintainer email="padmanabhan@neobotix.de">Pradheep Padmanabhan</maintainer>
+    <license>BSD</license>
+    <url>http://wiki.ros.org/base_local_planner</url>
+
+    <buildtool_depend>ament_cmake</buildtool_depend>
+    <buildtool_depend>ament_cmake_python</buildtool_depend>
+  
+    <exec_depend>costmap_converter</exec_depend>
+    <exec_depend>costmap_converter_msgs</exec_depend>
+
+    <exec_depend>geometry_msgs</exec_depend>
+    <exec_depend>libg2o</exec_depend>
+    <exec_depend>dwb_critics</exec_depend>
+    <exec_depend>nav2_core</exec_depend>
+    <exec_depend>nav2_costmap_2d</exec_depend>
+    <exec_depend>nav2_msgs</exec_depend>
+    <exec_depend>nav2_util</exec_depend>
+    <exec_depend>pluginlib</exec_depend>
+    <exec_depend>rclcpp</exec_depend>
+    <depend>rclpy</depend>
+    <exec_depend>rclcpp_action</exec_depend>
+    <exec_depend>rclcpp_lifecycle</exec_depend>
+    <exec_depend>std_msgs</exec_depend>
+    <exec_depend>tf2_ros</exec_depend>
+    <exec_depend>visualization_msgs</exec_depend>
+    <exec_depend>neo_srvs2</exec_depend>
+    <exec_depend>nav2_bringup</exec_depend>
+    <export>
+        <build_type>ament_cmake</build_type>
+        <nav2_core plugin="${prefix}/neo_mpc_planner_plugin.xml" />
+    </export>
+
+</package>
+
+

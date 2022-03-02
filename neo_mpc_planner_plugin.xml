@@ -1,0 +1,7 @@
+<library path="neo_mpc_planner2">
+  <class type="neo_mpc_planner::NeoMpcPlanner" base_class_type="nav2_core::Controller">
+    <description>
+      This is pure pursuit controller
+    </description>
+  </class>
+</library>
