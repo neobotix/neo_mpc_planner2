@@ -155,6 +155,12 @@ private:
 	tf2::Duration transform_tolerance_;
 	rclcpp::Client<neo_srvs2::srv::Optimizer>::SharedPtr client;
 
+	std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
+  carrot_pub_;
+
+  std::unique_ptr<geometry_msgs::msg::PointStamped> createCarrotMsg(
+    const geometry_msgs::msg::PoseStamped & carrot_pose);
+
 	geometry_msgs::msg::Pose goal_pose;
 };
 

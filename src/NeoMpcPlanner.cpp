@@ -164,6 +164,17 @@ geometry_msgs::msg::PoseStamped NeoMpcPlanner::getLookAheadPoint(
   return *goal_pose_it;
 }
 
+std::unique_ptr<geometry_msgs::msg::PointStamped> NeoMpcPlanner::createCarrotMsg(
+  const geometry_msgs::msg::PoseStamped & carrot_pose)
+{
+  auto carrot_msg = std::make_unique<geometry_msgs::msg::PointStamped>();
+  carrot_msg->header = carrot_pose.header;
+  carrot_msg->point.x = carrot_pose.pose.position.x;
+  carrot_msg->point.y = carrot_pose.pose.position.y;
+  carrot_msg->point.z = 0.01;  // publish right over map to stand out
+  return carrot_msg;
+}
+
 geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & position,
   const geometry_msgs::msg::Twist & speed,
@@ -174,13 +185,13 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 	// For now just for testing
   auto carrot_pose = getLookAheadPoint(0.8, transformed_plan);
 
+  carrot_pub_->publish(createCarrotMsg(carrot_pose));
+
   auto request = std::make_shared<neo_srvs2::srv::Optimizer::Request>();
   request->current_vel = speed;
   request->carrot_pose = carrot_pose;
   request->goal_pose = goal_pose;
   request->current_pose = position;
-
-	std::cout<<position.pose.position.x<<","<<position.pose.position.y<<std::endl;
 
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
@@ -190,7 +201,6 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   }
 
   auto result = client->async_send_request(request);
-
 
 	auto out = result.get();
 	geometry_msgs::msg::TwistStamped cmd_vel_final;
@@ -204,6 +214,7 @@ void NeoMpcPlanner::cleanup()
 
 void NeoMpcPlanner::activate()
 {
+	  carrot_pub_->on_activate();
 }
 
 void NeoMpcPlanner::deactivate()
@@ -213,7 +224,7 @@ void NeoMpcPlanner::deactivate()
 void NeoMpcPlanner::setPlan(const nav_msgs::msg::Path & plan)
 {
   global_plan_ = plan;
-  goal_pose = plan.poses[-1].pose;
+  goal_pose = plan.poses[plan.poses.size() - 1].pose;
 }
 
 void NeoMpcPlanner::setSpeedLimit(
@@ -238,7 +249,7 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
   logger_ = node->get_logger();
   clock_ = node->get_clock();
   client = node->create_client<neo_srvs2::srv::Optimizer>("optimizer");
-
+  carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
 }
 
 }
