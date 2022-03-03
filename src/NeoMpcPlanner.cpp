@@ -172,12 +172,15 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 	auto transformed_plan = transformGlobalPlan(position);
 
 	// For now just for testing
-  auto carrot_pose = getLookAheadPoint(1.0, transformed_plan);
+  auto carrot_pose = getLookAheadPoint(0.8, transformed_plan);
 
   auto request = std::make_shared<neo_srvs2::srv::Optimizer::Request>();
   request->current_vel = speed;
   request->carrot_pose = carrot_pose;
   request->goal_pose = goal_pose;
+  request->current_pose = position;
+
+	std::cout<<position.pose.position.x<<","<<position.pose.position.y<<std::endl;
 
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
@@ -192,7 +195,6 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 	auto out = result.get();
 	geometry_msgs::msg::TwistStamped cmd_vel_final;
 	cmd_vel_final = out->output_vel; 
-	std::cout<<cmd_vel_final.twist.linear.x<<std::endl;
   return cmd_vel_final;
 }
 

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
+from __future__ import division
+
 import rclpy
 from rclpy.node import Node
-
 from neo_srvs2.srv import Optimizer
 from geometry_msgs.msg import TwistStamped, PoseStamped
 import numpy as np
 from scipy.optimize import minimize
+import math
+from functools import partial
+ 
 
 class MpcOptimizationServer(Node):
 
@@ -31,6 +35,7 @@ class MpcOptimizationServer(Node):
 		self.w_terminal = 0.15
 
 		self.bnds  = list()
+		self.cons = []
 		b_x_vel = (-0.7, 0.7)
 		b_y_vel = (-0.7, 0.7)
 		b_rot = (-0.7, 0.7)
@@ -38,11 +43,36 @@ class MpcOptimizationServer(Node):
 			self.bnds.append(b_x_vel)
 			self.bnds.append(b_y_vel)
 			self.bnds.append(b_rot)
+			self.cons.append({'type': 'ineq', 'fun': partial(self.f_constraint, index = i)})
 
 		self.initial_guess = np.zeros(self.no_ctrl_steps*3)
 		self.prediction_horizon = 3.0
 		self.dt  = self.prediction_horizon/self.no_ctrl_steps #time_interval_between_control_pts used in integration
 
+	def f_constraint(self, initial_guess, index):
+		return  0.7 - (np.sqrt((initial_guess[0+index*3])*(initial_guess[0+index*3]) +(initial_guess[1+index*3])*(initial_guess[1+index*3])))   
+
+	def euler_from_quaternion(self, x, y, z, w):
+		"""
+		Convert a quaternion into euler angles (roll, pitch, yaw)
+		roll is rotation around x in radians (counterclockwise)
+		pitch is rotation around y in radians (counterclockwise)
+		yaw is rotation around z in radians (counterclockwise)
+		"""
+		t0 = +2.0 * (w * x + y * z)
+		t1 = +1.0 - 2.0 * (x * x + y * y)
+		roll_x = math.atan2(t0, t1)
+
+		t2 = +2.0 * (w * y - z * x)
+		t2 = +1.0 if t2 > +1.0 else t2
+		t2 = -1.0 if t2 < -1.0 else t2
+		pitch_y = math.asin(t2)
+
+		t3 = +2.0 * (w * z + x * y)
+		t4 = +1.0 - 2.0 * (y * y + z * z)
+		yaw_z = math.atan2(t3, t4)
+
+		return roll_x, pitch_y, yaw_z # in radians
 
 	def initial_guess_update(self, initial_guess,guess,no_ctrl_steps):
 		for i in range(0, no_ctrl_steps-1):
@@ -50,10 +80,25 @@ class MpcOptimizationServer(Node):
 		initial_guess[0+3*(no_ctrl_steps-1):3+3*(no_ctrl_steps-1)] = guess[0:3]
 		return initial_guess
 
-	def objective(self, initial_guess, target_pose, current_velocity, final_goal):
-		tot_x = 0
-		tot_y = 0
-		tot_z = 0
+	def objective(self, initial_guess, current_pose, target_pose, current_velocity, final_goal):
+
+		self.cost_trans = 0.0
+		self.cost_orient = 0.0
+		self.cost_control = 0.0
+		self.cost_terminal = 0.0
+		self.cost_total = 0.0
+
+		self.update_x = current_pose.pose.position.x;
+		self.update_y = current_pose.pose.position.y;
+		
+		_, _, self.update_yaw = self.euler_from_quaternion(current_pose.pose.orientation.x, current_pose.pose.orientation.y, current_pose.pose.orientation.z, current_pose.pose.orientation.w)
+
+		_, _, target_yaw = self.euler_from_quaternion(target_pose.pose.orientation.x, target_pose.pose.orientation.y, target_pose.pose.orientation.z, target_pose.pose.orientation.w)
+
+		tot_x = current_velocity.linear.x
+		tot_y = current_velocity.linear.y
+		tot_z = current_velocity.angular.z
+
 		for i in range((self.no_ctrl_steps)):
 			# Predict the velocity
 			tot_x = self.dt*(initial_guess[0+3*i]-tot_x*1.) + tot_x
@@ -63,41 +108,46 @@ class MpcOptimizationServer(Node):
 			# Update the position for the predicted velocity
 			self.update_x += tot_x*np.cos(self.update_yaw) - tot_y*np.sin(self.update_yaw)
 			self.update_y += tot_x*np.sin(self.update_yaw) + tot_y*np.cos(self.update_yaw)   
-			self.update_yaw += 0.0
+			self.update_yaw += tot_z * self.dt
 
 			tar_pos = np.array((target_pose.pose.position.x, target_pose.pose.position.y))
 			pred_pos = np.array((self.update_x,self.update_y))
 
 			# Predicted velocity
-			curr_vel = np.array((current_velocity.linear.x, current_velocity.linear.y))
-			pred_vel = np.array((initial_guess[0], initial_guess[1]))
+			curr_vel = np.array((current_velocity.linear.x, current_velocity.linear.y, current_velocity.angular.z))
+			pred_vel = np.array((initial_guess[0+3*i], initial_guess[1+3*i], initial_guess[2+3*i]))
 
 			# Cost update
 			self.cost_trans = self.w_trans * (np.linalg.norm(tar_pos - pred_pos)**2) / self.no_ctrl_steps
 			self.cost_total += self.cost_trans
-			self.cost_orient += self.w_orient * (target_pose.pose.orientation.z - self.update_yaw)**2 / self.no_ctrl_steps
+			self.cost_orient = self.w_orient * (0.0 - self.update_yaw)**2 / self.no_ctrl_steps
 			self.cost_total += self.cost_orient
-			self.cost_control += self.w_control * (np.linalg.norm(curr_vel - pred_vel))  / self.no_ctrl_steps      
-			self.cost_total += self.cost_orient
+			self.cost_control = self.w_control * (np.linalg.norm(curr_vel - pred_vel))  / self.no_ctrl_steps      
+			self.cost_total += self.cost_control
+
+		_, _, final_yaw = self.euler_from_quaternion(final_goal.orientation.x, final_goal.orientation.y, final_goal.orientation.z, final_goal.orientation.w)
 
 		fin_goal = [final_goal.position.x, final_goal.position.y]
 		dist_error = np.linalg.norm(tar_pos - fin_goal)
-		orient_error = final_goal.orientation.z - self.update_yaw
-		self.cost_terminal = (self.w_trans * dist_error**2)*self.w_terminal
+		orient_error = 0.0 - self.update_yaw
+		self.cost_terminal = ((self.w_trans * dist_error**2) + (self.w_orient * orient_error**2))*self.w_terminal
 		self.cost_total += self.cost_terminal
+
 		return self.cost_total
 
 	def optimizer(self, request, response):
-		self.cost_total = 0.0
-		x = minimize(self.objective, self.initial_guess, args=(request.carrot_pose, request.current_vel, request.goal_pose),
-				method='SLSQP',bounds= self.bnds, options={'ftol':1e-5,'disp':False})
+		x = minimize(self.objective, self.initial_guess, args=(request.current_pose, request.carrot_pose, request.current_vel, request.goal_pose),
+				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-5,'disp':False})
 		
 		response.output_vel.twist.linear.x = x.x[0]
 		response.output_vel.twist.linear.y = x.x[1]
 		response.output_vel.twist.angular.z = x.x[2]
 		print(x)
-		self.initial_guess = self.initial_guess_update(self.initial_guess, x.x, self.no_ctrl_steps)
-		
+		if (x.success):
+			self.initial_guess = self.initial_guess_update(self.initial_guess, x.x, self.no_ctrl_steps)
+		else:
+			self.initial_guess = x.x
+
 		return response
 
 def main(args=None):
