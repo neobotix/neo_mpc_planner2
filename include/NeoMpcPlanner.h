@@ -151,6 +151,7 @@ private:
   nav2_costmap_2d::Costmap2D * costmap_;
   rclcpp::Logger logger_ {rclcpp::get_logger("RegulatedPurePursuitController")};
   rclcpp::Clock::SharedPtr clock_;
+  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_path_pub_;
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
 	tf2::Duration transform_tolerance_;
 	rclcpp::Client<neo_srvs2::srv::Optimizer>::SharedPtr client;
@@ -160,6 +161,8 @@ private:
 
   std::unique_ptr<geometry_msgs::msg::PointStamped> createCarrotMsg(
     const geometry_msgs::msg::PoseStamped & carrot_pose);
+
+  double getLookAheadDistance(const geometry_msgs::msg::Twist & speed);
 
 	geometry_msgs::msg::Pose goal_pose;
 };

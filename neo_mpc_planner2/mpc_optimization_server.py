@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import division
 
 import rclpy
 from rclpy.node import Node
@@ -10,10 +9,8 @@ from scipy.optimize import minimize
 import math
 from functools import partial
 import time
- 
 
 class MpcOptimizationServer(Node):
-
 	def __init__(self):
 		super().__init__('mpc_optimization_server')
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
@@ -85,80 +82,93 @@ class MpcOptimizationServer(Node):
 		init_guess[0+3*(self.no_ctrl_steps-1):3+3*(self.no_ctrl_steps-1)] = guess[0:3]
 		return init_guess
 
-	def objective(self, gue):
+	def objective(self, initial_guess):
 
-		self.cost_trans = 0.0
-		self.cost_orient = 0.0
-		self.cost_control = 0.0
-		self.cost_terminal = 0.0
-		self.cost_total = 0.0
-
-		self.update_x = self.current_pose.pose.position.x;
-		self.update_y = self.current_pose.pose.position.y;
-		
-		self.update_roll, _, self.update_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
-
+		self.cost = 0
+		self.cost_d = 0
+		self.cost_o = 0
+		self.cost_r = 0
+		self.cost_t = 0
+		self.cost_t_d = 0
+		self.cost_t_o = 0
+		self.cost_d1 = 0
+		self.cost_r1 = 0
 		_, _, target_yaw = self.euler_from_quaternion(self.carrot_pose.pose.orientation.x, self.carrot_pose.pose.orientation.y, self.carrot_pose.pose.orientation.z, self.carrot_pose.pose.orientation.w)
 
-		_, _, final_yaw = self.euler_from_quaternion(self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w)
+		wp12 = [self.carrot_pose.pose.position.x, self.carrot_pose.pose.position.y, target_yaw]
 
+		_, _, final_yaw = self.euler_from_quaternion(self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w)
+		
+		self.x = 0.0
+		self.y = 0.0
+		self.z = 0.0
+		cmd_vel = initial_guess
 		tot_x = self.current_velocity.linear.x
 		tot_y = self.current_velocity.linear.y
 		tot_z = self.current_velocity.angular.z
+		for i in range((self.no_ctrl_steps)):
 
-		cmd_vel = gue
-
-		for i in range(0, self.no_ctrl_steps):
 			# Predict the velocity
+
 			tot_x = self.dt*(cmd_vel[0+3*i]-tot_x*1.) + tot_x
-			tot_y = self.dt*(cmd_vel[0+3*i]-tot_y*1.) + tot_y
-			tot_z = self.dt*(cmd_vel[0+3*i]-tot_z*1.) + tot_z
+			tot_y = self.dt*(cmd_vel[1+3*i]-tot_y*1.) + tot_y
+			tot_z = self.dt*(cmd_vel[2+3*i]-tot_z*1.) + tot_z
 
 			# Update the position for the predicted velocity
-			self.update_x += tot_x*np.cos(self.update_yaw) - tot_y*np.sin(self.update_yaw)
-			self.update_y += tot_x*np.sin(self.update_yaw) + tot_y*np.cos(self.update_yaw)   
-			self.update_yaw += tot_z * self.dt
+			self.x += tot_x*np.cos(self.z) - tot_y*np.sin(self.z)
+			self.y += tot_x*np.sin(self.z) + tot_y*np.cos(self.z)   
+			self.z += tot_z * self.dt
 
-			tar_pos = np.array((self.carrot_pose.pose.position.x, self.carrot_pose.pose.position.y))
-			pred_pos = np.array((self.update_x,self.update_y))
-
-			# Predicted velocity
-			curr_vel = np.array((self.current_velocity.linear.x, self.current_velocity.linear.y, self.current_velocity.angular.z))
+			# Step 2: Validate the various self.cost (Using the same idea from Markus Nuernberger's thesis)
+			# for i in range((self.no_ctrl_steps)):
+			# i) self.cost for error in displacement and orientation
+			curr_pos = np.array((wp12[0],wp12[1]))
+			pred_pos = np.array((self.x,self.y))
+			step_dist_error =  np.linalg.norm(curr_pos - pred_pos)
+			step_orient_error = wp12[2] - self.z
+			self.cost_d1 = ((self.w_d * step_dist_error**2) + (self.w_o * step_orient_error**2)) / self.no_ctrl_steps            
+			curr_pos1 = [self.x,self.y]
+			self.cost += self.cost_d1
+			# self.cost_o1 = self.w_rew * (np.linalg.norm(curr_pos-curr_pos1)) / self.no_ctrl_steps    
+			# self.cost += self.cost_o1
+			curr_vel = np.array((self.current_velocity.linear.x, self.current_velocity.linear.y, \
+			self.current_velocity.angular.z ))
 			pred_vel = np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))
+			self.cost_r1 = self.w_c * (np.linalg.norm(curr_vel - pred_vel))  / self.no_ctrl_steps          
+			self.cost += self.cost_r1
+		# iii) terminal self.cost
 
-			# Cost update
-			self.cost_trans = self.w_trans * (np.linalg.norm(tar_pos - pred_pos)**2) / self.no_ctrl_steps
-			self.cost_total += self.cost_trans
-			self.cost_orient = self.w_orient * (self.update_yaw - 0.0)**2 / self.no_ctrl_steps
-			self.cost_total += self.cost_orient
-			self.cost_control = self.w_control * (np.linalg.norm(curr_vel - pred_vel)**2)  / self.no_ctrl_steps      
-			self.cost_total += self.cost_control
-
-		fin_goal = [self.goal_pose.position.x, self.goal_pose.position.y]
-		dist_error = np.linalg.norm(tar_pos - fin_goal)
-		orient_error = final_yaw - 0.0
-		self.cost_terminal = ((self.w_trans * dist_error**2) + (self.w_orient * orient_error**2))*self.w_terminal
-		self.cost_total += self.cost_terminal
-
-		return self.cost_total
+		final_goal = [self.goal_pose.position.x, self.goal_pose.position.y]
+		step_dist_error =  np.linalg.norm(curr_pos - final_goal)
+		step_orient_error = final_yaw - self.z
+		step_dist_error *= 1.0
+		self.cost_t = ((self.w_d * step_dist_error**2) + (self.w_o * step_orient_error**2))*self.w_t
+		self.cost_t_d = self.w_d * step_dist_error**2
+		self.cost_t_o = self.w_o * step_orient_error**2
+		self.cost += self.cost_t 
+		# self.PubRaysPath.publish(rays)
+		# if(self.success == 0):
+		# self.accum.append(self.cost)       
+		return self.cost
 
 	def optimizer(self, request, response):
 
-		self.w_trans = 0.55
-		self.w_orient = 0.55
-		self.w_control = 0.05
-		self.w_terminal = 0.15
+		self.w_d = 0.55
+		self.w_o = 0.55
+		self.w_c= 0.05
+		self.w_t = 0.15
 
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
 		self.current_velocity = request.current_vel
 		self.goal_pose = request.goal_pose
 
-		print("x_bef", self.initial_guess)
-		x = minimize(self.objective, self.initial_guess,
+		ig = self.initial_guess
+		x = minimize(self.objective, ig,
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-5,'disp':False})
 		
-		print("x", x.x)
+		print(x)
+
 		response.output_vel.twist.linear.x = x.x[0]
 		response.output_vel.twist.linear.y = x.x[1]
 		response.output_vel.twist.angular.z = x.x[2]

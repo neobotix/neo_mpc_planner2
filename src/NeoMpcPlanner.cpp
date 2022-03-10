@@ -115,9 +115,8 @@ nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
   transformed_plan.header.frame_id = costmap_ros_->getBaseFrameID();
   transformed_plan.header.stamp = robot_pose.header.stamp;
 
-  // Remove the portion of the global plan that we've already passed so we don't
-  // process it on the next iteration (this is called path pruning)
   global_plan_.poses.erase(begin(global_plan_.poses), transformation_begin);
+  global_path_pub_->publish(transformed_plan);
 
   if (transformed_plan.poses.empty()) {
     throw nav2_core::PlannerException("Resulting plan has 0 poses in it.");
@@ -146,6 +145,18 @@ bool NeoMpcPlanner::transformPose(
   return false;
 }
 
+double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & speed)
+{
+  // If using velocity-scaled look ahead distances, find and clamp the dist
+  // Else, use the static look ahead distance
+  double lookahead_dist = 0.65;
+
+  lookahead_dist = fabs(speed.linear.x) * 0.8;
+  lookahead_dist = std::clamp(lookahead_dist, 0.6, 1.0);
+ 
+  return lookahead_dist;
+}
+
 geometry_msgs::msg::PoseStamped NeoMpcPlanner::getLookAheadPoint(
   const double & lookahead_dist,
   const nav_msgs::msg::Path & transformed_plan)
@@ -155,6 +166,7 @@ geometry_msgs::msg::PoseStamped NeoMpcPlanner::getLookAheadPoint(
     transformed_plan.poses.begin(), transformed_plan.poses.end(), [&](const auto & ps) {
       return hypot(ps.pose.position.x, ps.pose.position.y) >= lookahead_dist;
     });
+
 
   // If the no pose is not far enough, take the last pose
   if (goal_pose_it == transformed_plan.poses.end()) {
@@ -182,8 +194,11 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 {
 	auto transformed_plan = transformGlobalPlan(position);
 
+  // Find look ahead distance and point on path and publish
+  double lookahead_dist = getLookAheadDistance(speed);
+
 	// For now just for testing
-  auto carrot_pose = getLookAheadPoint(0.8, transformed_plan);
+  auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
 
@@ -192,13 +207,6 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   request->carrot_pose = carrot_pose;
   request->goal_pose = goal_pose;
   request->current_pose = position;
-
-  while (!client->wait_for_service(1s)) {
-    if (!rclcpp::ok()) {
-      RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Interrupted while waiting for the service. Exiting.");
-    }
-    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
-  }
 
   auto result = client->async_send_request(request);
 
@@ -214,6 +222,7 @@ void NeoMpcPlanner::cleanup()
 
 void NeoMpcPlanner::activate()
 {
+	  global_path_pub_->on_activate();
 	  carrot_pub_->on_activate();
 }
 
@@ -249,6 +258,15 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
   logger_ = node->get_logger();
   clock_ = node->get_clock();
   client = node->create_client<neo_srvs2::srv::Optimizer>("optimizer");
+  global_path_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
+
+  while (!client->wait_for_service(1s)) {
+    if (!rclcpp::ok()) {
+      RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Interrupted while waiting for the service. Exiting.");
+    }
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
+  }
+  
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
 }
 
