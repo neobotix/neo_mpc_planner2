@@ -4,6 +4,7 @@ import rclpy
 from rclpy.node import Node
 from neo_srvs2.srv import Optimizer
 from geometry_msgs.msg import TwistStamped, PoseStamped, Pose
+from nav_msgs.msg import OccupancyGrid
 import numpy as np
 from scipy.optimize import minimize
 import math
@@ -14,10 +15,12 @@ class MpcOptimizationServer(Node):
 	def __init__(self):
 		super().__init__('mpc_optimization_server')
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
+		self.subscription = self.create_subscription(OccupancyGrid, '/local_costmap/costmap', self.costmap_callback, 10)
 		self.current_pose = Pose()
 		self.carrot_pose = PoseStamped()
 		self.goal_pose = PoseStamped()
 		self.current_velocity = TwistStamped()
+		self.costmap = OccupancyGrid()
 
 		self.no_ctrl_steps = 3
 
@@ -26,6 +29,8 @@ class MpcOptimizationServer(Node):
 		self.cost_control = 0.0
 		self.cost_terminal = 0.0
 		self.cost_total = 0.0
+		self.costmap_cost = 0.0
+		self.last_control = [0,0,0]
 
 		self.update_x = 0.0
 		self.update_y = 0.0
@@ -35,6 +40,9 @@ class MpcOptimizationServer(Node):
 		self.w_orient = 0.0
 		self.w_control = 0.0
 		self.w_terminal = 0.0
+		self.size_x_ = 0
+
+		self.map_resolution = 0.0
 
 		self.bnds  = list()
 		self.cons = []
@@ -50,6 +58,19 @@ class MpcOptimizationServer(Node):
 		self.initial_guess = np.zeros(self.no_ctrl_steps*3)
 		self.prediction_horizon = 3.0
 		self.dt  = self.prediction_horizon/self.no_ctrl_steps #time_interval_between_control_pts used in integration
+
+	# Handle costmap information
+	def costmap_callback(self, msg):
+		self.costmap = msg
+		self.map_resolution = msg.info.resolution
+		self.size_x_ = msg.info.width
+
+	def get_cost(self, pose):
+		# pose is an array of (x,y)
+		mx = (pose[0] - 0.0) / self.map_resolution
+		my = (pose[1] - 0.0) / self.map_resolution
+		index = (int)(my * self.size_x_  + mx)
+		return self.costmap.data[index] / 100
 
 	def f_constraint(self, initial, index):
 		return  0.7 - (np.sqrt((initial[0+index*3])*(initial[0+index*3]) +(initial[1+index*3])*(initial[1+index*3])))   
@@ -124,6 +145,8 @@ class MpcOptimizationServer(Node):
 			# i) self.cost for error in displacement and orientation
 			curr_pos = np.array((wp12[0],wp12[1]))
 			pred_pos = np.array((self.x,self.y))
+
+			self.costmap_cost = self.get_cost(pred_pos)
 			step_dist_error =  np.linalg.norm(curr_pos - pred_pos)
 			step_orient_error = wp12[2] - self.z
 			self.cost_d1 = ((self.w_d * step_dist_error**2) + (self.w_o * step_orient_error**2)) / self.no_ctrl_steps            
@@ -136,6 +159,8 @@ class MpcOptimizationServer(Node):
 			pred_vel = np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))
 			self.cost_r1 = self.w_c * (np.linalg.norm(curr_vel - pred_vel))  / self.no_ctrl_steps          
 			self.cost += self.cost_r1
+		
+		self.cost += self.costmap_cost
 		# iii) terminal self.cost
 
 		final_goal = [self.goal_pose.position.x, self.goal_pose.position.y]
@@ -157,6 +182,7 @@ class MpcOptimizationServer(Node):
 		self.w_o = 0.55
 		self.w_c= 0.05
 		self.w_t = 0.15
+		self.w_costmap = 0.25
 
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
@@ -167,7 +193,9 @@ class MpcOptimizationServer(Node):
 		x = minimize(self.objective, ig,
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-5,'disp':False})
 		
-		print(x)
+		for i in range(0,3):
+			x.x[i] = x.x[i] * 0.5 + self.last_control[i]*(1 - 0.5)
+			self.last_control[i] = x.x[i]
 
 		response.output_vel.twist.linear.x = x.x[0]
 		response.output_vel.twist.linear.y = x.x[1]
