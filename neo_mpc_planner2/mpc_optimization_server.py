@@ -68,10 +68,10 @@ class MpcOptimizationServer(Node):
 
 	def get_cost(self, pose):
 		# pose is an array of (x,y)
-		mx = (pose[0] - 0.0) / self.map_resolution
-		my = (pose[1] - 0.0) / self.map_resolution
-		index = (int)(my * self.size_x_  + mx)
-		return self.costmap.data[index] / 100
+		mx = (int)((2.5 + pose[0]) / self.map_resolution)
+		my = (int)((2.5 + pose[1]) / self.map_resolution)
+		index = (my * self.size_x_  + mx)
+		return self.costmap.data[index] / 100.
 
 	def f_constraint(self, initial, index):
 		return  0.7 - (np.sqrt((initial[0+index*3])*(initial[0+index*3]) +(initial[1+index*3])*(initial[1+index*3])))   
@@ -161,7 +161,8 @@ class MpcOptimizationServer(Node):
 			self.cost_r1 = self.w_c * (np.linalg.norm(curr_vel - pred_vel))  / self.no_ctrl_steps          
 			self.cost += self.cost_r1
 		
-		self.cost += self.costmap_cost
+			self.cost += self.costmap_cost * self.w_costmap
+		
 		# iii) terminal self.cost
 
 		final_goal = [self.goal_pose.position.x, self.goal_pose.position.y]
@@ -208,6 +209,11 @@ class MpcOptimizationServer(Node):
 		x = minimize(self.objective, ig,
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-5,'disp':False})
 		
+		self.publishLocalPlan(x.x)
+		self.PubRaysPath.publish(self.local_plan)
+
+		# if predicted pose has cost > 0.55, then return zero velocity
+
 		for i in range(0,3):
 			x.x[i] = x.x[i] * 0.5 + self.last_control[i]*(1 - 0.5)
 			self.last_control[i] = x.x[i]
