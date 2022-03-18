@@ -4,7 +4,7 @@ import rclpy
 from rclpy.node import Node
 from neo_srvs2.srv import Optimizer
 from geometry_msgs.msg import TwistStamped, PoseStamped, Pose
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Path
 import numpy as np
 from scipy.optimize import minimize
 import math
@@ -16,12 +16,12 @@ class MpcOptimizationServer(Node):
 		super().__init__('mpc_optimization_server')
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
 		self.subscription = self.create_subscription(OccupancyGrid, '/local_costmap/costmap', self.costmap_callback, 10)
+		self.PubRaysPath = self.create_publisher(Path, 'local_plan', 10)
 		self.current_pose = Pose()
 		self.carrot_pose = PoseStamped()
 		self.goal_pose = PoseStamped()
 		self.current_velocity = TwistStamped()
 		self.costmap = OccupancyGrid()
-
 		self.no_ctrl_steps = 3
 
 		self.cost_trans = 0.0
@@ -56,6 +56,7 @@ class MpcOptimizationServer(Node):
 			self.cons.append({'type': 'ineq', 'fun': partial(self.f_constraint, index = i)})
 
 		self.initial_guess = np.zeros(self.no_ctrl_steps*3)
+		self.local_plan = Path()
 		self.prediction_horizon = 3.0
 		self.dt  = self.prediction_horizon/self.no_ctrl_steps #time_interval_between_control_pts used in integration
 
@@ -170,11 +171,25 @@ class MpcOptimizationServer(Node):
 		self.cost_t = ((self.w_d * step_dist_error**2) + (self.w_o * step_orient_error**2))*self.w_t
 		self.cost_t_d = self.w_d * step_dist_error**2
 		self.cost_t_o = self.w_o * step_orient_error**2
-		self.cost += self.cost_t 
-		# self.PubRaysPath.publish(rays)
-		# if(self.success == 0):
-		# self.accum.append(self.cost)       
+		self.cost += self.cost_t    
 		return self.cost
+
+	def publishLocalPlan(self, x):
+		self.local_plan.poses.clear()
+		pos_x = self.current_pose.pose.position.x
+		pos_y = self.current_pose.pose.position.y
+
+		for i in range((self.no_ctrl_steps)):
+			pose = PoseStamped()
+			pos_x += x[3*i]*np.cos(0.0) - x[1+3*i]*np.sin(0.0)
+			pos_y += x[3*i]*np.sin(0.0) + x[1+3*i]*np.cos(0.0)   
+			pose.pose.position.x = pos_x
+			pose.pose.position.y = pos_y
+			pose.header.stamp = self.get_clock().now().to_msg()
+			self.local_plan.poses.append(pose)
+	
+		self.local_plan.header.stamp = self.get_clock().now().to_msg()
+		self.local_plan.header.frame_id = "map"
 
 	def optimizer(self, request, response):
 
@@ -182,7 +197,7 @@ class MpcOptimizationServer(Node):
 		self.w_o = 0.55
 		self.w_c= 0.05
 		self.w_t = 0.15
-		self.w_costmap = 0.25
+		self.w_costmap = 4.0
 
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
