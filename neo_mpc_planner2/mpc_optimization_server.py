@@ -22,7 +22,7 @@ class MpcOptimizationServer(Node):
 		self.goal_pose = PoseStamped()
 		self.current_velocity = TwistStamped()
 		self.costmap = OccupancyGrid()
-		self.no_ctrl_steps = 3
+		self.no_ctrl_steps = 5
 
 		self.cost_trans = 0.0
 		self.cost_orient = 0.0
@@ -57,21 +57,24 @@ class MpcOptimizationServer(Node):
 
 		self.initial_guess = np.zeros(self.no_ctrl_steps*3)
 		self.local_plan = Path()
-		self.prediction_horizon = 3.0
+		self.prediction_horizon = 5.0
 		self.dt  = self.prediction_horizon/self.no_ctrl_steps #time_interval_between_control_pts used in integration
 
 	# Handle costmap information
 	def costmap_callback(self, msg):
 		self.costmap = msg
 		self.map_resolution = msg.info.resolution
+		self.grid = np.array(msg.data, dtype=np.int8).reshape(msg.info.height, msg.info.width)
 		self.size_x_ = msg.info.width
 
 	def get_cost(self, pose):
 		# pose is an array of (x,y)
-		mx = (int)((2.5 + pose[0]) / self.map_resolution)
-		my = (int)((2.5 + pose[1]) / self.map_resolution)
-		index = (my * self.size_x_  + mx)
-		return self.costmap.data[index] / 100.
+		mx = round((pose[0] - self.costmap.info.origin.position.x)/ self.costmap.info.resolution)
+		my = round((pose[1] - self.costmap.info.origin.position.y)/ self.costmap.info.resolution)
+		if(abs(mx) > self.costmap.info.height - 1 or abs(my) > self.costmap.info.width - 1):
+			return 1.0
+
+		return self.grid[int(mx)][int(my)] / 100.
 
 	def f_constraint(self, initial, index):
 		return  0.7 - (np.sqrt((initial[0+index*3])*(initial[0+index*3]) +(initial[1+index*3])*(initial[1+index*3])))   
@@ -115,6 +118,7 @@ class MpcOptimizationServer(Node):
 		self.cost_t_o = 0
 		self.cost_d1 = 0
 		self.cost_r1 = 0
+		self.costmap_cost = 0
 		_, _, target_yaw = self.euler_from_quaternion(self.carrot_pose.pose.orientation.x, self.carrot_pose.pose.orientation.y, self.carrot_pose.pose.orientation.z, self.carrot_pose.pose.orientation.w)
 
 		wp12 = [self.carrot_pose.pose.position.x, self.carrot_pose.pose.position.y, target_yaw]
@@ -153,15 +157,12 @@ class MpcOptimizationServer(Node):
 			self.cost_d1 = ((self.w_d * step_dist_error**2) + (self.w_o * step_orient_error**2)) / self.no_ctrl_steps            
 			curr_pos1 = [self.x,self.y]
 			self.cost += self.cost_d1
-			# self.cost_o1 = self.w_rew * (np.linalg.norm(curr_pos-curr_pos1)) / self.no_ctrl_steps    
-			# self.cost += self.cost_o1
 			curr_vel = np.array((self.current_velocity.linear.x, self.current_velocity.linear.y, \
 			self.current_velocity.angular.z ))
 			pred_vel = np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))
 			self.cost_r1 = self.w_c * (np.linalg.norm(curr_vel - pred_vel))  / self.no_ctrl_steps          
 			self.cost += self.cost_r1
-		
-			self.cost += self.costmap_cost * self.w_costmap
+			self.cost +=  self.w_costmap_scale * self.costmap_cost ** 2 / self.no_ctrl_steps
 		
 		# iii) terminal self.cost
 
@@ -194,11 +195,11 @@ class MpcOptimizationServer(Node):
 
 	def optimizer(self, request, response):
 
-		self.w_d = 0.55
-		self.w_o = 0.55
+		self.w_d = 0.25
+		self.w_o = 0.25
 		self.w_c= 0.05
 		self.w_t = 0.15
-		self.w_costmap = 4.0
+		self.w_costmap_scale = 0.05
 
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
@@ -207,12 +208,9 @@ class MpcOptimizationServer(Node):
 
 		ig = self.initial_guess
 		x = minimize(self.objective, ig,
-				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-5,'disp':False})
-		
+				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-5,'disp':False})		
 		self.publishLocalPlan(x.x)
 		self.PubRaysPath.publish(self.local_plan)
-
-		# if predicted pose has cost > 0.55, then return zero velocity
 
 		for i in range(0,3):
 			x.x[i] = x.x[i] * 0.5 + self.last_control[i]*(1 - 0.5)

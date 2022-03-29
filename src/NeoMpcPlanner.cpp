@@ -149,10 +149,11 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.65;
+  double lookahead_dist = 0.7;
 
-  lookahead_dist = fabs(speed.linear.x) * 0.8;
-  lookahead_dist = std::clamp(lookahead_dist, 0.6, 1.0);
+  // if ( abs(speed.linear.x) > 0.0 && abs(speed.linear.y) > 0.0) {
+  // 	lookahead_dist = 0.4;
+  // }
  
   return lookahead_dist;
 }
@@ -166,7 +167,6 @@ geometry_msgs::msg::PoseStamped NeoMpcPlanner::getLookAheadPoint(
     transformed_plan.poses.begin(), transformed_plan.poses.end(), [&](const auto & ps) {
       return hypot(ps.pose.position.x, ps.pose.position.y) >= lookahead_dist;
     });
-
 
   // If the no pose is not far enough, take the last pose
   if (goal_pose_it == transformed_plan.poses.end()) {
