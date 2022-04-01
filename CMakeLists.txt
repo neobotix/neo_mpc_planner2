@@ -17,7 +17,8 @@ find_package(tf2_sensor_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(neo_srvs2 REQUIRED)
 find_package(rclpy REQUIRED)
-
+find_package(Python3 COMPONENTS Interpreter Development)
+find_package(pybind11 REQUIRED)
 set(CMAKE_CXX_STANDARD 14)
 
 include_directories(
@@ -39,6 +40,7 @@ set(dependencies
   tf2_geometry_msgs
   tf2_eigen
   neo_srvs2
+  Python3
 )
 
 ament_python_install_package(${PROJECT_NAME})
@@ -73,5 +75,15 @@ ament_export_libraries(${library_name})
 ament_export_dependencies(${dependencies})
 
 pluginlib_export_plugin_description_file(nav2_core neo_mpc_planner_plugin.xml)
+
+pybind11_add_module(mymodule SHARED src/costmap_wrapper.cpp)
+
+ament_target_dependencies(mymodule
+  PUBLIC ${dependencies}
+)
+
+install(TARGETS mymodule
+  DESTINATION "${PYTHON_INSTALL_DIR}/${PROJECT_NAME}"
+)
 
 ament_package()

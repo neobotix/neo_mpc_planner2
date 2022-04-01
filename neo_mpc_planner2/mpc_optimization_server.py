@@ -71,6 +71,9 @@ class MpcOptimizationServer(Node):
 		# pose is an array of (x,y)
 		mx = round((pose[0] - self.costmap.info.origin.position.x)/ self.costmap.info.resolution)
 		my = round((pose[1] - self.costmap.info.origin.position.y)/ self.costmap.info.resolution)
+
+		# Check if the predicted footprint is in collision
+
 		if(abs(mx) > self.costmap.info.height - 1 or abs(my) > self.costmap.info.width - 1):
 			return 1.0
 

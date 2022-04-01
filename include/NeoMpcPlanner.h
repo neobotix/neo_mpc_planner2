@@ -32,8 +32,8 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  *********************************************************************/
 
-#ifndef INCLUDE_NEOLOCALPLANNER_H_
-#define INCLUDE_NEOLOCALPLANNER_H_
+#ifndef INCLUDE_NEOMPCPLANNER_H_
+#define INCLUDE_NEOMPCPLANNER_H_
 
 #include <tf2_ros/buffer.h>
 // #include <dynamic_reconfigure/server.h>
@@ -170,4 +170,4 @@ private:
 
 } // neo_local_planner
 
-#endif /* INCLUDE_NEOLOCALPLANNER_H_ */
+#endif /* INCLUDE_NEOMPCPLANNER_H_ */
