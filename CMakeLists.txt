@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 project(neo_mpc_planner2)
+set(CMAKE_CXX_STANDARD 14)
+
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
@@ -18,8 +20,8 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(neo_srvs2 REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development)
-find_package(pybind11 REQUIRED)
-set(CMAKE_CXX_STANDARD 14)
+find_package(pybind11_vendor REQUIRED)
+find_package(pybind11)
 
 include_directories(
   include
@@ -40,7 +42,6 @@ set(dependencies
   tf2_geometry_msgs
   tf2_eigen
   neo_srvs2
-  Python3
 )
 
 ament_python_install_package(${PROJECT_NAME})
@@ -79,7 +80,7 @@ pluginlib_export_plugin_description_file(nav2_core neo_mpc_planner_plugin.xml)
 pybind11_add_module(mymodule SHARED src/costmap_wrapper.cpp)
 
 ament_target_dependencies(mymodule
-  PUBLIC ${dependencies}
+  PUBLIC ${dependencies} 
 )
 
 install(TARGETS mymodule
