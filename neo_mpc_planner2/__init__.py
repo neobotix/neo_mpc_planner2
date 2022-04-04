@@ -1,1 +1,1 @@
-from neo_mpc_planner2.mymodule import *
+from neo_mpc_planner2.mpc import *

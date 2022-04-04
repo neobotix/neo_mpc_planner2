@@ -46,13 +46,13 @@ set(dependencies
 
 ament_python_install_package(${PROJECT_NAME})
 
-set(library_name neo_mpc_planner2)
+set(library_name mpc)
 
-add_library(${library_name} SHARED
+pybind11_add_module(${library_name} SHARED
         src/NeoMpcPlanner.cpp)
 
 ament_target_dependencies(${library_name}
-  ${dependencies}
+  PUBLIC ${dependencies} 
 )
 
 install(DIRECTORY include/
@@ -69,6 +69,11 @@ install(TARGETS ${library_name}
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
+
+install(TARGETS ${library_name}
+  DESTINATION "${PYTHON_INSTALL_DIR}/${PROJECT_NAME}"
+)
+
 install(PROGRAMS neo_mpc_planner2/mpc_optimization_server.py DESTINATION lib/${PROJECT_NAME})
 
 ament_export_include_directories(include)
@@ -76,15 +81,5 @@ ament_export_libraries(${library_name})
 ament_export_dependencies(${dependencies})
 
 pluginlib_export_plugin_description_file(nav2_core neo_mpc_planner_plugin.xml)
-
-pybind11_add_module(mymodule SHARED src/costmap_wrapper.cpp)
-
-ament_target_dependencies(mymodule
-  PUBLIC ${dependencies} 
-)
-
-install(TARGETS mymodule
-  DESTINATION "${PYTHON_INSTALL_DIR}/${PROJECT_NAME}"
-)
 
 ament_package()

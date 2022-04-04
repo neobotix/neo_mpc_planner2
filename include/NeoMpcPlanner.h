@@ -58,6 +58,7 @@
 #include <neo_srvs2/srv/optimizer.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/thread.hpp>
+#include <pybind11/pybind11.h>
 
 
 namespace neo_mpc_planner {
@@ -134,6 +135,8 @@ public:
    */
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 	
+  int shareCostMap();
+
 private:
   nav_msgs::msg::Path transformGlobalPlan(const geometry_msgs::msg::PoseStamped & pose);
   
@@ -143,7 +146,7 @@ private:
   geometry_msgs::msg::PoseStamped getLookAheadPoint(
   	const double & lookahead_dist,
   	const nav_msgs::msg::Path & transformed_plan);
-	
+  
 	nav_msgs::msg::Path global_plan_;
 	std::shared_ptr<tf2_ros::Buffer> tf_;
   std::string plugin_name_;

@@ -270,7 +270,18 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
 }
 
+int NeoMpcPlanner::shareCostMap() {
+    return 1;
 }
-// neo_mpc_planner
+
+} // neo_mpc_planner
+
+namespace py = pybind11;
+
+PYBIND11_MODULE(mpc, m) {
+    py::class_<neo_mpc_planner::NeoMpcPlanner>(m, "mpc")
+        .def(py::init())
+        .def("shareCostMap", &neo_mpc_planner::NeoMpcPlanner::shareCostMap);
+}
 
 PLUGINLIB_EXPORT_CLASS(neo_mpc_planner::NeoMpcPlanner, nav2_core::Controller)
