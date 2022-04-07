@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
 project(neo_mpc_planner2)
-set(CMAKE_CXX_STANDARD 14)
-
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
@@ -19,9 +17,8 @@ find_package(tf2_sensor_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(neo_srvs2 REQUIRED)
 find_package(rclpy REQUIRED)
-find_package(Python3 COMPONENTS Interpreter Development)
-find_package(pybind11_vendor REQUIRED)
-find_package(pybind11)
+
+set(CMAKE_CXX_STANDARD 14)
 
 include_directories(
   include
@@ -46,13 +43,13 @@ set(dependencies
 
 ament_python_install_package(${PROJECT_NAME})
 
-set(library_name mpc)
+set(library_name neo_mpc_planner2)
 
-pybind11_add_module(${library_name} SHARED
+add_library(${library_name} SHARED
         src/NeoMpcPlanner.cpp)
 
 ament_target_dependencies(${library_name}
-  PUBLIC ${dependencies} 
+  ${dependencies}
 )
 
 install(DIRECTORY include/
@@ -69,11 +66,6 @@ install(TARGETS ${library_name}
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-
-install(TARGETS ${library_name}
-  DESTINATION "${PYTHON_INSTALL_DIR}/${PROJECT_NAME}"
-)
-
 install(PROGRAMS neo_mpc_planner2/mpc_optimization_server.py DESTINATION lib/${PROJECT_NAME})
 
 ament_export_include_directories(include)

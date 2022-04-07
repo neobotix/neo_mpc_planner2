@@ -58,8 +58,6 @@
 #include <neo_srvs2/srv/optimizer.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/thread.hpp>
-#include <pybind11/pybind11.h>
-
 
 namespace neo_mpc_planner {
 
@@ -151,13 +149,16 @@ private:
 	std::shared_ptr<tf2_ros::Buffer> tf_;
   std::string plugin_name_;
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
+	geometry_msgs::msg::TwistStamped m_last_cmd_vel;
   nav2_costmap_2d::Costmap2D * costmap_;
-  rclcpp::Logger logger_ {rclcpp::get_logger("RegulatedPurePursuitController")};
+  rclcpp::Logger logger_ {rclcpp::get_logger("MPC")};
   rclcpp::Clock::SharedPtr clock_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_path_pub_;
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
 	tf2::Duration transform_tolerance_;
 	rclcpp::Client<neo_srvs2::srv::Optimizer>::SharedPtr client;
+	bool is_last_point = false;
+	rclcpp::Time m_last_time;
 
 	std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
   carrot_pub_;
