@@ -344,6 +344,7 @@ class MpcOptimizationServer(Node):
 		if (self.update_opt_param == True and (self.old_goal != self.goal_pose)):
 			self.update_opt_param = False
 			self.initial_guess = np.zeros(self.no_ctrl_steps*3)
+			self.last_control = [0,0,0]
 			self.count = 0
 
 		if ((np.linalg.norm(np.array((self.current_pose.pose.position.x, self.current_pose.pose.position.y)) - np.array((self.goal_pose.position.x, self.goal_pose.position.y)))) <= 1.0):
@@ -399,9 +400,9 @@ class MpcOptimizationServer(Node):
 			delta_t = current_time - self.last_time
 			self.last_time = current_time
 
-			response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + 0.25 * delta_t)
-			response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1])+ 0.25 * delta_t) 
-			response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + 0.25 * delta_t)
+			response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmax(abs(x.x[0]), abs(self.last_control[0]) - 0.25 * delta_t)
+			response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmax(abs(x.x[1]), abs(self.last_control[1]) - 0.25 * delta_t) 
+			response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmax(abs(x.x[2]), abs(self.last_control[2]) - 0.25 * delta_t)
 
 			self.last_control[0] = response.output_vel.twist.linear.x 
 			self.last_control[1] = response.output_vel.twist.linear.y
