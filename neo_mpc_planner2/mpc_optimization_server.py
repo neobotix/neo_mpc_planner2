@@ -195,7 +195,7 @@ class MpcOptimizationServer(Node):
 
 			tot_x = self.dt*(cmd_vel[0+3*i] - tot_x) + tot_x
 			tot_y = self.dt*(cmd_vel[1+3*i] - tot_y) + tot_y
-			tot_z = self.dt*(cmd_vel[2+3*i] - tot_z) + tot_z
+			tot_z = self.dt*(cmd_vel[2+3*i] / 10.0 - tot_z) + tot_z
 
 			# Update the position for the predicted velocity
 			self.x += tot_x*np.cos(self.z) - tot_y*np.sin(self.z)
