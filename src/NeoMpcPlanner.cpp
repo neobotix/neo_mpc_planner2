@@ -150,11 +150,6 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
   double lookahead_dist = 0.4;
-
-  // if ( abs(speed.linear.x) > 0.0 && abs(speed.linear.y) > 0.0) {
-  // 	lookahead_dist = 0.4;
-  // }
- 
   return lookahead_dist;
 }
 
@@ -171,7 +166,6 @@ geometry_msgs::msg::PoseStamped NeoMpcPlanner::getLookAheadPoint(
   // If the no pose is not far enough, take the last pose
   if (goal_pose_it == transformed_plan.poses.end()) {
     goal_pose_it = std::prev(transformed_plan.poses.end());
-    is_last_point = true;
   }
 
   return *goal_pose_it;
@@ -213,30 +207,9 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 
 	auto out = result.get();
 	geometry_msgs::msg::TwistStamped cmd_vel_final;
-		cmd_vel_final = out->output_vel; 
-	
-	const rclcpp::Time time_now = rclcpp::Clock().now();
-	const double dt = (time_now - m_last_time).seconds();
-	m_last_time = time_now;
 	cmd_vel_final = out->output_vel; 
 
-	// if (euclidean_distance(position.pose, goal_pose) > 0.4 ) {
-	// 	cmd_vel_final = out->output_vel; 
-	// }
-
-	// else {
-	// 	if (fabs(out->output_vel.twist.linear.x) > 0.0) {
-	// 		out->output_vel.twist.linear.x = (out->output_vel.twist.linear.x > 0.0 ? 1.0 : -1.0) * fmin(0.7, fabs(m_last_cmd_vel.twist.linear.x) - 0.25 * dt);	
-	// 	}
-	// 	if (fabs(out->output_vel.twist.linear.y) > 0.0) {
-	// 		out->output_vel.twist.linear.y = (out->output_vel.twist.linear.y > 0.0 ? 1.0 : -1.0) * fmin(0.7, fabs(m_last_cmd_vel.twist.linear.y) - 0.25 * dt);
-	// 	}
-		
-	// 	// out->output_vel.twist.angular.z = (out->output_vel.twist.angular.z > 0.0 ? 1.0 : -1.0) * fmin(fabs(out->output_vel.twist.angular.z), fabs(m_last_cmd_vel.twist.angular.z) - 0.25 * 0.03);
-	// 	cmd_vel_final = out->output_vel; 
-	// }
-	m_last_cmd_vel = cmd_vel_final;
-  return cmd_vel_final;
+	return cmd_vel_final;
 }
 
 void NeoMpcPlanner::cleanup()
@@ -255,7 +228,6 @@ void NeoMpcPlanner::deactivate()
 
 void NeoMpcPlanner::setPlan(const nav_msgs::msg::Path & plan)
 {
-	is_last_point = false;
   global_plan_ = plan;
   goal_pose = plan.poses[plan.poses.size() - 1].pose;
 }
@@ -290,7 +262,6 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
     }
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
   }
-  
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
 }
 

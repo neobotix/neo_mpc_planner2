@@ -157,8 +157,6 @@ private:
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
 	tf2::Duration transform_tolerance_;
 	rclcpp::Client<neo_srvs2::srv::Optimizer>::SharedPtr client;
-	bool is_last_point = false;
-	rclcpp::Time m_last_time;
 
 	std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
   carrot_pub_;
