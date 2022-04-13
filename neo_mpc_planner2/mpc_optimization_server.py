@@ -12,6 +12,7 @@ from functools import partial
 import time
 from neo_nav2_py_costmap2D.line_iterator import LineIterator
 from neo_nav2_py_costmap2D.costmap import Costmap2d
+from geometry_msgs.msg import PolygonStamped
 
 class MpcOptimizationServer(Node):
 	def __init__(self):
@@ -72,6 +73,15 @@ class MpcOptimizationServer(Node):
 		self.dt  = self.prediction_horizon /self.no_ctrl_steps #time_interval_between_control_pts used in integration
 		self.last_time = 0.0
 		self.update_opt_param = False
+		self.subscription_footprint = self.create_subscription(
+            PolygonStamped,
+            '/local_costmap/published_footprint',
+            self.footprint_callback,
+            10)
+		self.subscription_footprint  # prevent unused variable warning.
+
+	def footprint_callback(self, msg):
+		self.footprint = msg.polygon
 
 	def f_constraint(self, initial, index):
 		return  0.07 - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
@@ -115,13 +125,18 @@ class MpcOptimizationServer(Node):
 
 		_, _, target_yaw = self.euler_from_quaternion(self.carrot_pose.pose.orientation.x, self.carrot_pose.pose.orientation.y, self.carrot_pose.pose.orientation.z, self.carrot_pose.pose.orientation.w)
 		_, _, final_yaw = self.euler_from_quaternion(self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w)
-		
+		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.goal_pose.orientation.w)
+
 		count = 1.0
 		tot_x = self.current_velocity.linear.x
 		tot_y = self.current_velocity.linear.y
 		tot_z = self.current_velocity.angular.z
 		curr_pos = np.array((self.carrot_pose.pose.position.x,self.carrot_pose.pose.position.y))
-		last_pos = curr_pos
+		last_pos = np.array((self.current_pose.pose.position.x,self.current_pose.pose.position.y))
+		odom_yaw = 0.0
+
+		pos_x = self.current_pose.pose.position.x
+		pos_y = self.current_pose.pose.position.y
 
 		for i in range((self.no_ctrl_steps)):
 			self.costmap_cost = 0
@@ -136,12 +151,16 @@ class MpcOptimizationServer(Node):
 			self.y += tot_x*np.sin(self.z) + tot_y*np.cos(self.z)   
 			self.z += tot_z * self.dt
 
+			pos_x += tot_x*np.cos(odom_yaw) - tot_y*np.sin(odom_yaw)
+			pos_y += tot_x*np.sin(odom_yaw) + tot_y*np.cos(odom_yaw)
+			odom_yaw += tot_z * self.dt
+
 			# Step 2: Validate the various self.cost_total(Using the same idea from Markus Nuernberger's thesis)
 			# for i in range((self.no_ctrl_steps)):
 			# i) self.cost_totalfor error in displacement and orientation
 			
 			mx0, my0 = self.c.getWorldToMap(last_pos[0], last_pos[1])
-			mx1, my1 = self.c.getWorldToMap(self.x, self.y)
+			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
 			line = LineIterator(mx0, my0, mx1, my1)
 			
 			c_c = 0.0
@@ -163,7 +182,7 @@ class MpcOptimizationServer(Node):
 			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x, self.current_velocity.linear.y, \
 			self.current_velocity.angular.z)) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps          
-			self.cost_total +=  self.w_costmap_scale * self.costmap_cost ** 2 / self.no_ctrl_steps
+			self.cost_total +=  self.w_costmap_scale * self.costmap_cost ** 2
 		
 		# iii) terminal self.cost
 
@@ -181,47 +200,69 @@ class MpcOptimizationServer(Node):
 
 		_, _, target_yaw = self.euler_from_quaternion(self.carrot_pose.pose.orientation.x, self.carrot_pose.pose.orientation.y, self.carrot_pose.pose.orientation.z, self.carrot_pose.pose.orientation.w)
 		_, _, final_yaw = self.euler_from_quaternion(self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w)
-		
+		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.goal_pose.orientation.w)
+
+		last_pos = np.array((self.current_pose.pose.position.x,self.current_pose.pose.position.y))
+
 		count = 1.0
 		tot_x = self.current_velocity.linear.x / 10.0
 		tot_y = self.current_velocity.linear.y / 10.0
 		tot_z = self.current_velocity.angular.z / 10.0
 		curr_pos = np.array((self.carrot_pose.pose.position.x,self.carrot_pose.pose.position.y))
-		last_pos = curr_pos
+		pos_x = self.current_pose.pose.position.x
+		pos_y = self.current_pose.pose.position.y
+		c_c = 0.0
+		
 
 		for i in range((self.no_ctrl_steps)):
 			self.costmap_cost = 0
+			footprint_dummy = self.footprint
+			footprint = self.footprint
 			# Predict the velocity
 
 			tot_x = self.dt*(cmd_vel[0+3*i] - tot_x) + tot_x
 			tot_y = self.dt*(cmd_vel[1+3*i] - tot_y) + tot_y
-			tot_z = self.dt*(cmd_vel[2+3*i] / 10.0 - tot_z) + tot_z
+			tot_z = self.dt*(cmd_vel[2+3*i] / 10.0  - tot_z) + tot_z
 
 			# Update the position for the predicted velocity
-			self.x += tot_x*np.cos(self.z) - tot_y*np.sin(self.z)
-			self.y += tot_x*np.sin(self.z) + tot_y*np.cos(self.z)   
-			self.z += tot_z * self.dt
+			self.x += tot_x*np.cos(self.z)  - tot_y*np.sin(self.z)
+			self.y += tot_x*np.sin(self.z) + tot_y*np.cos(self.z)  
+			self.z += tot_z * self.dt 
 
 			# Step 2: Validate the various self.cost_total(Using the same idea from Markus Nuernberger's thesis)
 			# for i in range((self.no_ctrl_steps)):
 			# i) self.cost_totalfor error in displacement and orientation
 			
-			mx0, my0 = self.c.getWorldToMap(last_pos[0], last_pos[1])
-			mx1, my1 = self.c.getWorldToMap(self.x, self.y)
-			line = LineIterator(mx0, my0, mx1, my1)
+			pos_x += tot_x *np.cos(odom_yaw) * 10.0 - tot_y*np.sin(odom_yaw)* 10.0
+			pos_y += tot_x *np.sin(odom_yaw) * 10.0 + tot_y*np.cos(odom_yaw)* 10.0
+			odom_yaw += tot_z * self.dt * 10.0
 			
+			mx0, my0 = self.c.getWorldToMap(last_pos[0], last_pos[1])
+			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
+			line = LineIterator(mx0, my0, mx1, my1)
+
+			for i in range(0, len(self.footprint.points) - 1):
+				a = self.footprint.points[i].x
+				b = self.footprint.points[i].y
+				footprint.points[i].x = self.footprint.points[i].x + (self.x * 5.0 )
+				footprint.points[i].y = self.footprint.points[i].y + (self.y * 5.0 )
+				self.footprint.points[i].x = a
+				self.footprint.points[i].y = b
+
+			# if (c_c == 0.0):
+			# 	c_c += self.c.getCost(mx1, my1)
+			# 	self.costmap_cost += c_c
 			c_c = 0.0
 			while(line.isValid() and count<=10):
 				line.advance()
 				lin_pos = np.array((line.getX(), line.getY()))
 				if(line.isValid()):
 					c_c += self.c.getCost(line.getX(), line.getY())
-					count = count + 1
 					self.costmap_cost += c_c
 
-			#  Just take the average cost
-			self.costmap_cost = self.costmap_cost / count
+				count = count + 1
 
+			 # Just take the average cost
 			last_pos = np.array((self.x, self.y))
 
 			step_dist_error =  np.linalg.norm(curr_pos - np.array((self.x, self.y)))
@@ -229,7 +270,8 @@ class MpcOptimizationServer(Node):
 			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x / 10.0, self.current_velocity.linear.y/10.0, \
 			self.current_velocity.angular.z/10.0 )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]/10.0))))  / self.no_ctrl_steps          
-			self.cost_total +=  self.w_costmap_scale * self.costmap_cost ** 2 / self.no_ctrl_steps
+			self.cost_total +=  self.w_costmap_scale * self.costmap_cost**2
+			self.cost_total += self.c.getFootprintCost(footprint) * 5.0
 		
 		# iii) terminal self.cost
 		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
@@ -241,6 +283,7 @@ class MpcOptimizationServer(Node):
 		self.local_plan.poses.clear()
 		pos_x = self.current_pose.pose.position.x
 		pos_y = self.current_pose.pose.position.y
+		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.goal_pose.orientation.w)
 
 		for i in range((self.no_ctrl_steps)):
 			pose = PoseStamped()
@@ -256,11 +299,11 @@ class MpcOptimizationServer(Node):
 
 	def optimizer(self, request, response):
 
-		self.w_trans = 0.25
-		self.w_orient = 0.35
+		self.w_trans = 0.35
+		self.w_orient = 0.25
 		self.w_control= 0.05
 		self.w_terminal = 0.01
-		self.w_costmap_scale = 0.05
+		self.w_costmap_scale = 0
 
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
@@ -286,6 +329,7 @@ class MpcOptimizationServer(Node):
 			for i in range(0,3):
 				x.x[i] = x.x[i] * self.low_pass_gain + self.last_control[i] * (1 - self.low_pass_gain)
 
+			print(x.fun)
 			current_time = time.time()
 			delta_t = current_time - self.last_time
 			self.last_time = current_time

@@ -149,7 +149,7 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.4;
+  double lookahead_dist = 0.1;
   return lookahead_dist;
 }
 
