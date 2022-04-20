@@ -50,18 +50,18 @@ class MpcOptimizationServer(Node):
 		self.bnds1  = list()
 		self.cons = []
 		self.cons1 = []
-		b_x_vel = (-0.07, 0.07)
-		b_y_vel = (-0.07, 0.07)
-		b_rot = (-0.7, 0.7)
+		b_x_vel = (-0.04, 0.04)
+		b_y_vel = (-0.04, 0.04)
+		b_rot = (-0.4, 0.4)
 		for i in range(self.no_ctrl_steps):
 			self.bnds.append(b_x_vel)
 			self.bnds.append(b_y_vel)
 			self.bnds.append(b_rot)
 			self.cons.append({'type': 'ineq', 'fun': partial(self.f_constraint, index = i)})
 
-		b_x_vel = (-0.7, 0.7)
-		b_y_vel = (-0.7, 0.7)
-		b_rot = (-0.7, 0.7)
+		b_x_vel = (-0.4, 0.4)
+		b_y_vel = (-0.4, 0.4)
+		b_rot = (-0.4, 0.4)
 
 		for i in range(self.no_ctrl_steps):
 			self.bnds1.append(b_x_vel)
@@ -86,10 +86,10 @@ class MpcOptimizationServer(Node):
 		self.footprint = msg.polygon
 
 	def f_constraint(self, initial, index):
-		return  0.07 - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
+		return  0.04 - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
 
 	def f_constraint1(self, initial, index):
-		return  0.7 - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3]))) 
+		return  0.4 - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3]))) 
 
 	def euler_from_quaternion(self, x, y, z, w):
 		"""
@@ -272,7 +272,7 @@ class MpcOptimizationServer(Node):
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x / 10.0, self.current_velocity.linear.y/10.0, \
 			self.current_velocity.angular.z/10.0 )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]/10.0))))  / self.no_ctrl_steps          
 			self.cost_total +=  self.w_costmap_scale * self.costmap_cost**2
-			self.cost_total += self.c.getFootprintCost(footprint) * 0.7
+			self.cost_total += self.c.getFootprintCost(footprint) * 0.4
 		
 		# iii) terminal self.cost
 		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
