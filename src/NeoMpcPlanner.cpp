@@ -89,6 +89,12 @@ nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
       return euclidean_distance(robot_pose, ps);
     });
 
+  geometry_msgs::msg::PoseStamped final_pose;
+  final_pose.header = global_plan_.header;
+  final_pose.pose = global_plan_.poses[global_plan_.poses.size() - 1].pose;
+  if ( euclidean_distance(robot_pose, final_pose) <= 0.7) {
+  	closer_to_goal = true;
+  }
   // Find points definitely outside of the costmap so we won't transform them.
   auto transformation_end = std::find_if(
     transformation_begin, end(global_plan_.poses),
@@ -149,7 +155,10 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.1;
+  double lookahead_dist = 0.2;
+  if (closer_to_goal) {
+  	lookahead_dist = 1.0;
+  }
   return lookahead_dist;
 }
 
@@ -202,6 +211,7 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   request->carrot_pose = carrot_pose;
   request->goal_pose = goal_pose;
   request->current_pose = position;
+  request->switch_opt = closer_to_goal;
 
   auto result = client->async_send_request(request);
 

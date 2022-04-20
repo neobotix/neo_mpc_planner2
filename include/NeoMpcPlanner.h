@@ -167,6 +167,7 @@ private:
   double getLookAheadDistance(const geometry_msgs::msg::Twist & speed);
 
 	geometry_msgs::msg::Pose goal_pose;
+	bool closer_to_goal = false;
 };
 
 

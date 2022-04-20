@@ -79,6 +79,8 @@ class MpcOptimizationServer(Node):
             self.footprint_callback,
             10)
 		self.subscription_footprint  # prevent unused variable warning.
+		self.old_goal = PoseStamped()
+		self.no_acceleration_limit = False
 
 	def footprint_callback(self, msg):
 		self.footprint = msg.polygon
@@ -216,7 +218,6 @@ class MpcOptimizationServer(Node):
 
 		for i in range((self.no_ctrl_steps)):
 			self.costmap_cost = 0
-			footprint_dummy = self.footprint
 			footprint = self.footprint
 			# Predict the velocity
 
@@ -237,10 +238,6 @@ class MpcOptimizationServer(Node):
 			pos_y += tot_x *np.sin(odom_yaw) * 10.0 + tot_y*np.cos(odom_yaw)* 10.0
 			odom_yaw += tot_z * self.dt * 10.0
 			
-			mx0, my0 = self.c.getWorldToMap(last_pos[0], last_pos[1])
-			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
-			line = LineIterator(mx0, my0, mx1, my1)
-
 			for i in range(0, len(self.footprint.points) - 1):
 				a = self.footprint.points[i].x
 				b = self.footprint.points[i].y
@@ -252,6 +249,11 @@ class MpcOptimizationServer(Node):
 			# if (c_c == 0.0):
 			# 	c_c += self.c.getCost(mx1, my1)
 			# 	self.costmap_cost += c_c
+
+			mx0, my0 = self.c.getWorldToMap(last_pos[0], last_pos[1])
+			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
+			line = LineIterator(mx0, my0, mx1, my1)
+			
 			c_c = 0.0
 			while(line.isValid() and count<=10):
 				line.advance()
@@ -259,7 +261,6 @@ class MpcOptimizationServer(Node):
 				if(line.isValid()):
 					c_c += self.c.getCost(line.getX(), line.getY())
 					self.costmap_cost += c_c
-
 				count = count + 1
 
 			 # Just take the average cost
@@ -271,7 +272,7 @@ class MpcOptimizationServer(Node):
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x / 10.0, self.current_velocity.linear.y/10.0, \
 			self.current_velocity.angular.z/10.0 )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]/10.0))))  / self.no_ctrl_steps          
 			self.cost_total +=  self.w_costmap_scale * self.costmap_cost**2
-			self.cost_total += self.c.getFootprintCost(footprint) * 5.0
+			self.cost_total += self.c.getFootprintCost(footprint) * 0.7
 		
 		# iii) terminal self.cost
 		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
@@ -303,12 +304,13 @@ class MpcOptimizationServer(Node):
 		self.w_orient = 0.25
 		self.w_control= 0.05
 		self.w_terminal = 0.01
-		self.w_costmap_scale = 0
+		self.w_costmap_scale = 0.0
 
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
 		self.current_velocity = request.current_vel
 		self.goal_pose = request.goal_pose
+		self.update_opt_param = request.switch_opt
 
 		# on new goal reset all the flags and initializers
 		if (self.update_opt_param == True and (self.old_goal != self.goal_pose)):
@@ -316,9 +318,10 @@ class MpcOptimizationServer(Node):
 			self.initial_guess = np.zeros(self.no_ctrl_steps*3)
 			self.last_control = [0,0,0]
 			self.count = 0
+			self.no_acceleration_limit = False
 
-		if ((np.linalg.norm(np.array((self.current_pose.pose.position.x, self.current_pose.pose.position.y)) - np.array((self.goal_pose.position.x, self.goal_pose.position.y)))) <= 1.0):
-			self.update_opt_param = True
+		# if ((np.linalg.norm(np.array((self.current_pose.pose.position.x, self.current_pose.pose.position.y)) - np.array((self.goal_pose.position.x, self.goal_pose.position.y)))) <= 1.2):
+		# 	self.update_opt_param = True
 
 		if (self.update_opt_param == False): 
 			x = minimize(self.objective, self.initial_guess,
@@ -329,15 +332,26 @@ class MpcOptimizationServer(Node):
 			for i in range(0,3):
 				x.x[i] = x.x[i] * self.low_pass_gain + self.last_control[i] * (1 - self.low_pass_gain)
 
-			print(x.fun)
 			current_time = time.time()
 			delta_t = current_time - self.last_time
 			self.last_time = current_time
 
-			# avoiding sudden jerks 
-			response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + 0.025 * delta_t) * 10.0
-			response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1])+ 0.025 * delta_t) * 10.0
-			response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + 0.25 * delta_t)
+			# avoiding sudden jerks
+			if(self.no_acceleration_limit == False):
+				response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + 0.0125 * delta_t) * 10.0
+				response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1])+ 0.0125 * delta_t) * 10.0
+				response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + 0.125 * delta_t)
+			else:
+				response.output_vel.twist.linear.x = x.x[0] * 10.0
+				response.output_vel.twist.linear.y = x.x[1] * 10.0
+				response.output_vel.twist.angular.z = x.x[2]
+
+			if (abs(response.output_vel.twist.linear.x) > 0.6 or abs(response.output_vel.twist.linear.y) > 0.6 ):
+				self.no_acceleration_limit = True
+
+			# response.output_vel.twist.linear.x = np.sign(response.output_vel.twist.linear.x) * np.fmax(abs(response.output_vel.twist.linear.x), abs(self.last_control[0] * 10.0) - 0.25 * delta_t)
+			# response.output_vel.twist.linear.y = np.sign(response.output_vel.twist.linear.y) * np.fmax(abs(response.output_vel.twist.linear.y), abs(self.last_control[1] * 10.0)- 0.25 * delta_t) 
+			# response.output_vel.twist.angular.z = np.sign(response.output_vel.twist.angular.z) * np.fmax(abs(response.output_vel.twist.angular.z), abs(self.last_control[2]) - 0.25 * delta_t)
 
 			self.last_control[0] = response.output_vel.twist.linear.x / 10.0
 			self.last_control[1] = response.output_vel.twist.linear.y / 10.0
@@ -367,9 +381,9 @@ class MpcOptimizationServer(Node):
 			delta_t = current_time - self.last_time
 			self.last_time = current_time
 
-			response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmax(abs(x.x[0]), abs(self.last_control[0]) - 0.25 * delta_t)
-			response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmax(abs(x.x[1]), abs(self.last_control[1]) - 0.25 * delta_t) 
-			response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmax(abs(x.x[2]), abs(self.last_control[2]) - 0.25 * delta_t)
+			response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmax(abs(x.x[0]), abs(self.last_control[0]) - 0.125 * delta_t)
+			response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmax(abs(x.x[1]), abs(self.last_control[1]) - 0.125 * delta_t) 
+			response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmax(abs(x.x[2]), abs(self.last_control[2]) - 0.125 * delta_t)
 
 			self.last_control[0] = response.output_vel.twist.linear.x 
 			self.last_control[1] = response.output_vel.twist.linear.y
