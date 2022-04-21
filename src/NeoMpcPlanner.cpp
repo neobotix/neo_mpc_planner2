@@ -95,6 +95,9 @@ nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
   if ( euclidean_distance(robot_pose, final_pose) <= 0.7) {
   	closer_to_goal = true;
   }
+  else {
+  	closer_to_goal = false;
+  }
   // Find points definitely outside of the costmap so we won't transform them.
   auto transformation_end = std::find_if(
     transformation_begin, end(global_plan_.poses),
@@ -157,7 +160,7 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
   // Else, use the static look ahead distance
   double lookahead_dist = 0.2;
   if (closer_to_goal) {
-  	lookahead_dist = 1.0;
+  	lookahead_dist = 0.4;
   }
   return lookahead_dist;
 }
