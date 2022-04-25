@@ -169,7 +169,7 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
   double lookahead_dist = 0.05;
-  if (!slow_down_)
+  if (!slow_down_ || closer_to_goal)
   {
   	lookahead_dist = 0.7;
 		if (closer_to_goal) {
@@ -232,7 +232,7 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   	slow_down_ = false;
   } else {
   	std::cout<<"slowing down"<<std::endl;
-  	slow_down_ = true;
+		slow_down_ = true;
   }
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
@@ -270,6 +270,9 @@ void NeoMpcPlanner::deactivate()
 void NeoMpcPlanner::setPlan(const nav_msgs::msg::Path & plan)
 {
   global_plan_ = plan;
+  if (goal_pose != plan.poses[plan.poses.size() - 1].pose) {
+  	slow_down_ = true;
+  }
   goal_pose = plan.poses[plan.poses.size() - 1].pose;
 }
 
