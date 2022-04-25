@@ -168,6 +168,7 @@ private:
 
 	geometry_msgs::msg::Pose goal_pose;
 	bool closer_to_goal = false;
+	bool slow_down_ = true;
 };
 
 

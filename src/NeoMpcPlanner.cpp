@@ -63,6 +63,16 @@ using namespace std::chrono_literals;
 
 namespace neo_mpc_planner {
 
+double createYawFromQuat(const geometry_msgs::msg::Quaternion & orientation)
+{
+	tf2::Quaternion q(orientation.x, orientation.y, orientation.z, orientation.w);
+  tf2::Matrix3x3 m(q);
+  double roll, pitch, yaw;
+  m.getRPY(roll, pitch, yaw);
+  return yaw;
+}
+
+
 nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
   const geometry_msgs::msg::PoseStamped & pose)
 {
@@ -158,9 +168,13 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.2;
-  if (closer_to_goal) {
-  	lookahead_dist = 0.4;
+  double lookahead_dist = 0.05;
+  if (!slow_down_)
+  {
+  	lookahead_dist = 0.7;
+		if (closer_to_goal) {
+  		lookahead_dist = 0.4;
+  	}
   }
   return lookahead_dist;
 }
@@ -206,6 +220,20 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 
 	// For now just for testing
   auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
+
+  // check if the pose orientation and robot orientation greater than 180
+  // change the lookahead accordingly
+
+  geometry_msgs::msg::PoseStamped robot_pose;
+
+  transformPose("map", position, robot_pose);
+
+  if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) < 1.30) {
+  	slow_down_ = false;
+  } else {
+  	std::cout<<"slowing down"<<std::endl;
+  	slow_down_ = true;
+  }
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
 
