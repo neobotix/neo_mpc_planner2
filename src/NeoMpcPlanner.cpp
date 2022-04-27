@@ -168,7 +168,7 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.05;
+  double lookahead_dist = 0.2;
   if (!slow_down_ || closer_to_goal)
   {
   	lookahead_dist = 0.7;
@@ -224,16 +224,20 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   // check if the pose orientation and robot orientation greater than 180
   // change the lookahead accordingly
 
-  geometry_msgs::msg::PoseStamped robot_pose;
-
-  transformPose("map", position, robot_pose);
-
-  if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) < 1.30) {
+  if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) < 1.0) {
   	slow_down_ = false;
+  	// Check if the robot can speed up once again, so that there is no oscillations between the lookaheads
+  	auto check_pose_up = getLookAheadPoint(0.7, transformed_plan);
+  	if (fabs(createYawFromQuat(check_pose_up.pose.orientation)) > 1.0) {
+	  	std::cout<<"slowing down"<<std::endl;
+  		slow_down_ = true;
+  	}
   } else {
   	std::cout<<"slowing down"<<std::endl;
 		slow_down_ = true;
   }
+
+
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
 
@@ -272,6 +276,7 @@ void NeoMpcPlanner::setPlan(const nav_msgs::msg::Path & plan)
   global_plan_ = plan;
   if (goal_pose != plan.poses[plan.poses.size() - 1].pose) {
   	slow_down_ = true;
+  	no_slow_down_ = true;
   }
   goal_pose = plan.poses[plan.poses.size() - 1].pose;
 }

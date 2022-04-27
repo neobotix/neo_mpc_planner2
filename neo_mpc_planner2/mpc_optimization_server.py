@@ -46,6 +46,8 @@ class MpcOptimizationServer(Node):
 		self.w_terminal = 0.0
 		self.size_x_ = 0
 
+		self.waiting_time = 0.0
+
 		self.bnds  = list()
 		self.bnds1  = list()
 		self.cons = []
@@ -65,6 +67,7 @@ class MpcOptimizationServer(Node):
 		b_x_vel = (-0.7, 0.7)
 		b_y_vel = (-0.7, 0.7)
 		b_rot = (-0.7, 0.7)
+		self.no_complete_rotation = False
 			
 		self.initial_guess = np.zeros(self.no_ctrl_steps * 3)
 		self.dt  = self.prediction_horizon /self.no_ctrl_steps #time_interval_between_control_pts used in integration
@@ -191,34 +194,42 @@ class MpcOptimizationServer(Node):
 			# 	c_c += self.c.getCost(mx1, my1)
 			# 	self.costmap_cost += c_c
 
-			mx0, my0 = self.c.getWorldToMap(last_pos[0], last_pos[1])
+			# mx0, my0 = self.c.getWorldToMap(last_pos[0], last_pos[1])
 			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
-			line = LineIterator(mx0, my0, mx1, my1)
+			self.costmap_cost = self.c.getCost(mx1, my1)
+			# line = LineIterator(mx0, my0, mx1, my1)
 			
-			c_c = 0.0
-			while(line.isValid() and count<=10):
-				line.advance()
-				lin_pos = np.array((line.getX(), line.getY()))
-				if(line.isValid()):
-					c_c += self.c.getCost(line.getX(), line.getY())
-					self.costmap_cost += c_c
-				count = count + 1
+			# c_c = 0.0
+			# while(line.isValid() and count<=10):
+			# 	line.advance()
+			# 	lin_pos = np.array((line.getX(), line.getY()))
+			# 	if(line.isValid()):
+			# 		c_c += self.c.getCost(line.getX(), line.getY())
+			# 		self.costmap_cost += c_c
+			# 	count = count + 1
 
 			 # Just take the average cost
-			last_pos = np.array((self.x, self.y))
+			# last_pos = np.array((self.x, self.y))
 
 			step_dist_error =  np.linalg.norm(curr_pos - np.array((self.x, self.y)))
 			step_orient_error = target_yaw - self.z
-			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
+			it = 1
+			if (self.no_complete_rotation == True and np.fabs(target_yaw) >= 1.57):
+				step_orient_error = target_yaw / 2.0 - self.z
+
+			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * it * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x , self.current_velocity.linear.y, \
 			self.current_velocity.angular.z )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps          
-			self.cost_total +=  self.w_costmap_scale * self.costmap_cost**2
+			self.cost_total +=  self.w_costmap_scale * self.costmap_cost
 			# self.cost_total += self.c.getFootprintCost(footprint)**2 * 0.0
 
 		# iii) terminal self.cost
 		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
 		step_orient_error = final_yaw - self.z
-		self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient* step_orient_error**2))*self.w_terminal  
+		it = 1
+		if (self.no_complete_rotation == True and np.fabs(target_yaw) >= 1.0):
+			it = 0
+		self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient* it*step_orient_error**2))*self.w_terminal  
 		return self.cost_total
 
 	def publishLocalPlan(self, x):
@@ -232,6 +243,9 @@ class MpcOptimizationServer(Node):
 		pose.pose.position.y = pos_y
 		self.local_plan.poses.append(pose)
 
+		for i in range((self.no_ctrl_steps) - 2):
+			x = np.append(x, np.array([x[3 * i], x[1 + 3*i], x[2 + 3*i]]))
+
 		for i in range((self.no_ctrl_steps)):
 			pose = PoseStamped()
 			odom_yaw += x[2+3*i] * self.dt
@@ -241,12 +255,18 @@ class MpcOptimizationServer(Node):
 			pose.pose.position.y = pos_y
 			pose.header.stamp = self.get_clock().now().to_msg()
 			q = self.quaternion_from_euler(0, 0, odom_yaw)
+			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
+			col = self.c.getCost(mx1, my1)
 			pose.pose.orientation.w = q[0]
 			pose.pose.orientation.x = q[1]
 			pose.pose.orientation.y = q[2]
 			pose.pose.orientation.z = q[3]
 			self.local_plan.poses.append(pose)
-	
+			if (col > 0.99):
+				self.collision = True
+				print("collision, so stopping")
+				break
+
 		self.local_plan.header.stamp = self.get_clock().now().to_msg()
 		self.local_plan.header.frame_id = "map"
 
@@ -292,13 +312,20 @@ class MpcOptimizationServer(Node):
 		self.w_orient = 0.15
 		self.w_control= 0.005
 		self.w_terminal = 0.01
-		self.w_costmap_scale = 0.08
+		self.w_costmap_scale = 0.9
 
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
 		self.current_velocity = request.current_vel
 		self.goal_pose = request.goal_pose
 		self.update_opt_param = request.switch_opt
+		mx1, my1 = self.c.getWorldToMap(self.current_pose.pose.position.x, self.current_pose.pose.position.y)
+		if (self.c.getCost(mx1, my1) > 0.5):
+			self.no_complete_rotation = True
+			print("region of no complete rotation")
+			print(self.c.getCost(mx1, my1))
+		else:
+			self.no_complete_rotation = False
 
 		# on new goal reset all the flags and initializers
 		if (self.old_goal != self.goal_pose):
@@ -311,30 +338,33 @@ class MpcOptimizationServer(Node):
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-3,'disp':False})		
 		self.publishLocalPlan(x.x)
 		self.PubRaysPath.publish(self.local_plan)
-
 		for i in range(0,3):
 			x.x[i] = x.x[i] * self.low_pass_gain + self.last_control[i] * (1 - self.low_pass_gain)
 
 		current_time = time.time()
 		delta_t = current_time - self.last_time
 		self.last_time = current_time
+		# self.collision_check(delta_t, x.x)
+		
+		
 
-		# avoiding sudden jerks and inertia
-		response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + 0.25 * 30 * delta_t)
-		response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1])+ 0.25 * 30 * delta_t) 
-		response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + 1.25 * 30 * delta_t)
+		if (self.collision == True):
+			response.output_vel.twist.linear.x = 0.0
+			response.output_vel.twist.linear.y = 0.0
+			response.output_vel.twist.angular.z = 0.0
+			self.waiting_time += delta_t
+			# After waiting for 3 seconds for the obstacle to clear, the robot proceeds further in the next service call.
+			if (self.waiting_time >= 3.0):
+				self.collision = False
+		else:
+			# avoiding sudden jerks and inertia
+			response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + 0.25 * 30 * delta_t)
+			response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1])+ 0.25 * 30 * delta_t) 
+			response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + 1.25 * 30 * delta_t)
 
 		self.last_control[0] = response.output_vel.twist.linear.x 
 		self.last_control[1] = response.output_vel.twist.linear.y 
 		self.last_control[2] = response.output_vel.twist.angular.z
-
-		self.collision_check(delta_t, x.x)
-
-		if (self.collision == True):
-			x.x = x.x*0.0
-			response.output_vel.twist.linear.x = 0.0
-			response.output_vel.twist.linear.y = 0.0
-			response.output_vel.twist.angular.z = 0.0
 
 		if (x.success):
 			self.initial_guess = self.initial_guess_update(self.initial_guess, x.x)
