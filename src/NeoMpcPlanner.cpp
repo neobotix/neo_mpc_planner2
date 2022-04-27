@@ -168,12 +168,12 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.2;
+  double lookahead_dist = 0.1;
   if (!slow_down_ || closer_to_goal)
   {
-  	lookahead_dist = 0.7;
+  	lookahead_dist = 0.4;
 		if (closer_to_goal) {
-  		lookahead_dist = 0.4;
+  		lookahead_dist = 0.2;
   	}
   }
   return lookahead_dist;
@@ -223,21 +223,29 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 
   // check if the pose orientation and robot orientation greater than 180
   // change the lookahead accordingly
+  double footprint_cost = collision_checker_->footprintCostAtPose(
+    position.pose.position.x, position.pose.position.y, tf2::getYaw(position.pose.orientation), costmap_ros_->getRobotFootprint());
 
   if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) < 1.0) {
   	slow_down_ = false;
   	// Check if the robot can speed up once again, so that there is no oscillations between the lookaheads
-  	auto check_pose_up = getLookAheadPoint(0.7, transformed_plan);
-  	if (fabs(createYawFromQuat(check_pose_up.pose.orientation)) > 1.0) {
-	  	std::cout<<"slowing down"<<std::endl;
+  	auto check_pose_up = getLookAheadPoint(0.4, transformed_plan);
+  	if (fabs(createYawFromQuat(check_pose_up.pose.orientation)) > 1.0 and footprint_cost > 200) {
   		slow_down_ = true;
   	}
-  } else {
-  	std::cout<<"slowing down"<<std::endl;
+  } else if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) >= 1.0 and footprint_cost > 200) {
 		slow_down_ = true;
+  } else {
+  	slow_down_ = false;
   }
 
+  if (slow_down_) {
+  	std::cout<<slow_down_<<std::endl;
+  }
 
+  if (footprint_cost == 255) {
+  	throw nav2_core::PlannerException("MPC detected collision!");
+  }
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
 
@@ -276,7 +284,6 @@ void NeoMpcPlanner::setPlan(const nav_msgs::msg::Path & plan)
   global_plan_ = plan;
   if (goal_pose != plan.poses[plan.poses.size() - 1].pose) {
   	slow_down_ = true;
-  	no_slow_down_ = true;
   }
   goal_pose = plan.poses[plan.poses.size() - 1].pose;
 }
@@ -312,6 +319,8 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
   }
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
+  collision_checker_ = std::make_unique<nav2_costmap_2d::
+      FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>(costmap_);
 }
 
 } // neo_mpc_planner

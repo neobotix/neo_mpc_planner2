@@ -48,6 +48,7 @@
 
 #include "nav2_core/controller.hpp"
 #include "nav2_util/geometry_utils.hpp"
+#include "nav2_costmap_2d/footprint_collision_checker.hpp"
 #include "nav2_util/lifecycle_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "pluginlib/class_loader.hpp"
@@ -170,6 +171,9 @@ private:
 	bool closer_to_goal = false;
 	bool slow_down_ = true;
 	bool no_slow_down_ = true;
+
+	std::unique_ptr<nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>
+  collision_checker_;
 };
 
 
