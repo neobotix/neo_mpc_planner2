@@ -13,6 +13,9 @@ import time
 from neo_nav2_py_costmap2D.line_iterator import LineIterator
 from neo_nav2_py_costmap2D.costmap import Costmap2d
 from geometry_msgs.msg import PolygonStamped
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 class MpcOptimizationServer(Node):
 	def __init__(self):
@@ -80,6 +83,8 @@ class MpcOptimizationServer(Node):
 		self.no_acceleration_limit = False
 		self.collision = False
 		self.collision_footprint = False
+		self.tf_buffer = Buffer()
+		self.tf_listener = TransformListener(self.tf_buffer, self)
 
 	def footprint_callback(self, msg):
 		self.footprint = msg.polygon
@@ -208,9 +213,20 @@ class MpcOptimizationServer(Node):
 
 	def publishLocalPlan(self, x):
 		self.local_plan.poses.clear()
-		pos_x = self.current_pose.pose.position.x
-		pos_y = self.current_pose.pose.position.y
-		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
+		try:
+			now = rclpy.time.Time()
+			trans = self.tf_buffer.lookup_transform(
+				"map",
+				"base_link",
+				now)
+		except TransformException as ex:
+			self.get_logger().info(
+				f'Could not transform map to base_link: {ex}')
+			return
+
+		pos_x = trans.transform.translation.x
+		pos_y = trans.transform.translation.y
+		_, _, yaw = self.euler_from_quaternion(trans.transform.rotation.x, trans.transform.rotation.y, trans.transform.rotation.z, trans.transform.rotation.w)
 
 		pose = PoseStamped()
 		pose.pose.position.x = pos_x
@@ -223,13 +239,13 @@ class MpcOptimizationServer(Node):
 		# ToDo: Make collision check for local plan seperate
 		for i in range((self.no_ctrl_steps)):
 			pose = PoseStamped()
-			odom_yaw += x[2+3*i] * self.dt
-			pos_x += x[3*i]*np.cos(odom_yaw) * self.dt - x[1+3*i]*np.sin(odom_yaw) * self.dt
-			pos_y += x[3*i]*np.sin(odom_yaw) * self.dt + x[1+3*i]*np.cos(odom_yaw) * self.dt   
+			yaw += x[2+3*i] * self.dt
+			pos_x += x[3*i]*np.cos(yaw) * self.dt - x[1+3*i]*np.sin(yaw) * self.dt
+			pos_y += x[3*i]*np.sin(yaw) * self.dt + x[1+3*i]*np.cos(yaw) * self.dt   
 			pose.pose.position.x = pos_x
 			pose.pose.position.y = pos_y
 			pose.header.stamp = self.get_clock().now().to_msg()
-			q = self.quaternion_from_euler(0, 0, odom_yaw)
+			q = self.quaternion_from_euler(0, 0, yaw)
 			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
 			col = self.c.getCost(mx1, my1)
 			pose.pose.orientation.w = q[0]
