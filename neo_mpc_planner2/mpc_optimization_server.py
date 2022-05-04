@@ -54,7 +54,7 @@ class MpcOptimizationServer(Node):
 		self.cons1 = []
 		b_x_vel = (-0.7, 0.7)
 		b_y_vel = (-0.7, 0.7)
-		b_rot = (-0.7, 0.7)
+		b_rot = (-0.5, 0.5)
 		for i in range(self.no_ctrl_steps):
 			self.bnds.append(b_x_vel)
 			self.bnds.append(b_y_vel)
@@ -85,7 +85,7 @@ class MpcOptimizationServer(Node):
 		self.footprint = msg.polygon
 
 	def f_constraint(self, initial, index):
-		return  0.7 - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
+		return  0.5 - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
 
 	def f_constraint_x(self, initial, index):
 		return  (self.last_control[0]) + 0.075 - initial[0 + index * 3]
@@ -257,9 +257,9 @@ class MpcOptimizationServer(Node):
 
 	def optimizer(self, request, response):
 
-		self.w_trans = 0.25
-		self.w_orient = 0.15
-		self.w_control= 0.005
+		self.w_trans = 0.82
+		self.w_orient = 0.50
+		self.w_control= 0.05
 		self.w_terminal = 0.05
 		self.w_costmap_scale = 0.05
 
@@ -277,7 +277,7 @@ class MpcOptimizationServer(Node):
 			self.waiting_time = 0.0
 
 		x = minimize(self.objective, self.initial_guess,
-				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-4,'disp':False})		
+				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-3,'disp':False})		
 		self.publishLocalPlan(x.x)
 		self.PubRaysPath.publish(self.local_plan)
 		for i in range(0,3):
@@ -299,9 +299,13 @@ class MpcOptimizationServer(Node):
 				self.waiting_time = 0.0
 		else:
 			# avoiding sudden jerks and inertia
-			response.output_vel.twist.linear.x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + 0.25 * self.dt)
-			response.output_vel.twist.linear.y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1])+ 0.25 * self.dt) 
-			response.output_vel.twist.angular.z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + 1.25 * self.dt)
+			temp_x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + 0.10 * self.dt)
+			temp_y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1])+ 0.10 * self.dt) 
+			temp_z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + 3.0 * self.dt)
+
+			response.output_vel.twist.linear.x = np.sign(temp_x) * np.fmax(abs(temp_x), abs(self.last_control[0]) - 2.5 * self.dt)
+			response.output_vel.twist.linear.y = np.sign(temp_y) * np.fmax(abs(temp_y), abs(self.last_control[1])- 2.5 * self.dt) 
+			response.output_vel.twist.angular.z = np.sign(temp_z) * np.fmax(abs(temp_z), abs(self.last_control[2]) - 3.0 * self.dt)
 
 		self.last_control[0] = response.output_vel.twist.linear.x 
 		self.last_control[1] = response.output_vel.twist.linear.y 

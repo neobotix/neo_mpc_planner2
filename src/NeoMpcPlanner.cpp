@@ -239,10 +239,6 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   	slow_down_ = false;
   }
 
-  if (slow_down_) {
-  	std::cout<<slow_down_<<std::endl;
-  }
-
   if (footprint_cost == 255) {
   	throw nav2_core::PlannerException("MPC detected collision!");
   }
