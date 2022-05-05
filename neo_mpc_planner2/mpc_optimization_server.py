@@ -236,7 +236,6 @@ class MpcOptimizationServer(Node):
 		for i in range((self.no_ctrl_steps) - 2):
 			x = np.append(x, np.array([x[3 * i], x[1 + 3*i], x[2 + 3*i]]))
 
-		# ToDo: Make collision check for local plan seperate
 		for i in range((self.no_ctrl_steps)):
 			pose = PoseStamped()
 			yaw += x[2+3*i] * self.dt
@@ -246,24 +245,48 @@ class MpcOptimizationServer(Node):
 			pose.pose.position.y = pos_y
 			pose.header.stamp = self.get_clock().now().to_msg()
 			q = self.quaternion_from_euler(0, 0, yaw)
+			pose.pose.orientation.w = q[0]
+			pose.pose.orientation.x = q[1]
+			pose.pose.orientation.y = q[2]
+			pose.pose.orientation.z = q[3]
+			self.local_plan.poses.append(pose)
+
+		self.local_plan.header.stamp = self.get_clock().now().to_msg()
+		self.local_plan.header.frame_id = "map"
+
+	def collision_check(self, x):
+		# Collision check with footprint
+		footprint = self.footprint
+		pos_x = self.current_pose.pose.position.x
+		pos_y = self.current_pose.pose.position.y
+		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
+
+		pose = PoseStamped()
+		pose.pose.position.x = pos_x
+		pose.pose.position.y = pos_y
+
+		for i in range((self.no_ctrl_steps) - 2):
+			x = np.append(x, np.array([x[3 * i], x[1 + 3*i], x[2 + 3*i]]))
+
+		for i in range((self.no_ctrl_steps)):
+			pose = PoseStamped()
+			odom_yaw += x[2+3*i] * self.dt
+			pos_x += x[3*i]*np.cos(odom_yaw) * self.dt - x[1+3*i]*np.sin(odom_yaw) * self.dt
+			pos_y += x[3*i]*np.sin(odom_yaw) * self.dt + x[1+3*i]*np.cos(odom_yaw) * self.dt   
+			pose.pose.position.x = pos_x
+			pose.pose.position.y = pos_y
+			pose.header.stamp = self.get_clock().now().to_msg()
+			q = self.quaternion_from_euler(0, 0, odom_yaw)
 			mx1, my1 = self.c.getWorldToMap(pos_x, pos_y)
 			col = self.c.getCost(mx1, my1)
 			pose.pose.orientation.w = q[0]
 			pose.pose.orientation.x = q[1]
 			pose.pose.orientation.y = q[2]
 			pose.pose.orientation.z = q[3]
-			self.local_plan.poses.append(pose)
 			if (col >= 0.99):
 				self.collision = True
 				print("Collision ahead, stopping the robot")
 				break
-
-		self.local_plan.header.stamp = self.get_clock().now().to_msg()
-		self.local_plan.header.frame_id = "map"
-
-	def collision_check(self, delta, x):
-		# Collision check with footprint
-		footprint = self.footprint
 
 		if (self.c.getFootprintCost(footprint) == 1.0):
 			self.collision_footprint = True
@@ -302,7 +325,7 @@ class MpcOptimizationServer(Node):
 		current_time = time.time()
 		delta_t = current_time - self.last_time
 		self.last_time = current_time
-		self.collision_check(delta_t, x.x)
+		self.collision_check(x.x)
 
 		if (self.collision == True or self.collision_footprint == True):
 			response.output_vel.twist.linear.x = 0.0
