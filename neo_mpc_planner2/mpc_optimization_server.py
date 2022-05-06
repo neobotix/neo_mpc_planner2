@@ -253,6 +253,7 @@ class MpcOptimizationServer(Node):
 
 		self.local_plan.header.stamp = self.get_clock().now().to_msg()
 		self.local_plan.header.frame_id = "map"
+		self.PubRaysPath.publish(self.local_plan)
 
 	def collision_check(self, x):
 		# Collision check with footprint
@@ -318,7 +319,6 @@ class MpcOptimizationServer(Node):
 		x = minimize(self.objective, self.initial_guess,
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':1e-3,'disp':False})		
 		self.publishLocalPlan(x.x)
-		self.PubRaysPath.publish(self.local_plan)
 		for i in range(0,3):
 			x.x[i] = x.x[i] * self.low_pass_gain + self.last_control[i] * (1 - self.low_pass_gain)
 
