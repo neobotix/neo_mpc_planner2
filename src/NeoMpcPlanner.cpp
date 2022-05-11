@@ -102,7 +102,7 @@ nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
   geometry_msgs::msg::PoseStamped final_pose;
   final_pose.header = global_plan_.header;
   final_pose.pose = global_plan_.poses[global_plan_.poses.size() - 1].pose;
-  if ( euclidean_distance(robot_pose, final_pose) <= 0.7) {
+  if (euclidean_distance(robot_pose, final_pose) <= lookahead_dist_close_to_goal_) {
   	closer_to_goal = true;
   }
   else {
@@ -168,12 +168,13 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.4;
+  double lookahead_dist = lookahead_dist_min_;
+
   if (!slow_down_ || closer_to_goal)
   {
-  	lookahead_dist = 0.4;
+  	lookahead_dist = lookahead_dist_max_;
 		if (closer_to_goal) {
-  		lookahead_dist = 0.4;
+  		lookahead_dist = lookahead_dist_close_to_goal_;
   	}
   }
   return lookahead_dist;
@@ -307,6 +308,19 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
   clock_ = node->get_clock();
   client = node->create_client<neo_srvs2::srv::Optimizer>("optimizer");
   global_path_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
+
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".lookahead_dist_min", rclcpp::ParameterValue(0.5));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".lookahead_dist_max", rclcpp::ParameterValue(0.5));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".lookahead_dist_close_to_goal", rclcpp::ParameterValue(0.5));
+
+  node->get_parameter(plugin_name_ + ".lookahead_dist_min", lookahead_dist_min_);
+  node->get_parameter(plugin_name_ + ".lookahead_dist_max", lookahead_dist_max_);
+  node->get_parameter(
+    plugin_name_ + ".lookahead_dist_close_to_goal",
+    lookahead_dist_close_to_goal_);
 
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
