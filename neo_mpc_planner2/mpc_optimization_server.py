@@ -327,7 +327,6 @@ class MpcOptimizationServer(Node):
 			self.collision_footprint = False
 
 	def optimizer(self, request, response):
-		print(self.acc_x_limit)
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
 		self.current_velocity = request.current_vel
