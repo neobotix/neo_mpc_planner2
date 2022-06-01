@@ -124,6 +124,8 @@ class MpcOptimizationServer(Node):
 		self.collision_footprint = False
 		self.tf_buffer = Buffer()
 		self.tf_listener = TransformListener(self.tf_buffer, self)
+		self.obs_pose = [0,3.0]
+		self.w_obs = 0.07
 
 	def footprint_callback(self, msg):
 		self.footprint = msg.polygon
@@ -228,11 +230,19 @@ class MpcOptimizationServer(Node):
 			self.current_velocity.angular.z )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps          
 			
 			# ii) Evaluvating obstacle cost
-			if(self.costmap_ros.getCost(mx1, my1) == 1.0):
+			if(self.costmap_ros.getCost(mx1, my1) >= 0.99):
 				self.cost_total +=  self.costmap_cost * 1000 / self.no_ctrl_steps
+				
 			else:
 				self.cost_total +=  self.w_costmap_scale * self.costmap_cost / self.no_ctrl_steps
-			
+
+			if(self.costmap_ros.getCost(mx1, my1) >= 1.0):
+				self.obs_pose[0] = pos_x
+				self.obs_pose[1] = pos_y
+
+			step_obs_error =  np.linalg.norm(self.obs_pose - np.array((pos_x, pos_y)))
+			self.cost_total += self.w_obs*(1/(step_obs_error))
+
 			if(self.costmap_ros.getFootprintCost(footprintss) == 1.0):
 				self.cost_total += (self.costmap_ros.getFootprintCost(footprintss)**2) * self.w_footprint_scale / self.no_ctrl_steps
 
@@ -316,7 +326,7 @@ class MpcOptimizationServer(Node):
 			pose.pose.orientation.y = q[2]
 			pose.pose.orientation.z = q[3]
 			if (col >= 0.99):
-				self.collision = True
+				# self.collision = True
 				print("Collision ahead, stopping the robot")
 				break
 
