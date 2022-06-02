@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # MIT License
 
 # Copyright (c) 2022 neobotix gmbh
@@ -19,8 +21,6 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-#!/usr/bin/env python3
 
 import rclpy
 from rclpy.node import Node

@@ -1,42 +1,31 @@
 /*********************************************************************
- * Software License Agreement (BSD License)
- *
- *  Copyright (c) 2016, Neobotix GmbH
- *  All rights reserved.
- *
- *  Redistribution and use in source and binary forms, with or without
- *  modification, are permitted provided that the following conditions
- *  are met:
- *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *   * Neither the name of the Neobotix nor the names of its
- *     contributors may be used to endorse or promote products derived
- *     from this software without specific prior written permission.
- *
- *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- *  FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
- *  COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- *  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
- *  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- *  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- *  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
- *  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- *  POSSIBILITY OF SUCH DAMAGE.
+MIT License
+
+Copyright (c) 2022 neobotix gmbh
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
  *********************************************************************/
 
 #ifndef INCLUDE_NEOMPCPLANNER_H_
 #define INCLUDE_NEOMPCPLANNER_H_
 
 #include <tf2_ros/buffer.h>
-// #include <dynamic_reconfigure/server.h>
 #include <angles/angles.h>
 #include "rclcpp/rclcpp.hpp"
 #include <nav_msgs/msg/path.hpp>
@@ -57,8 +46,6 @@
 #include "geometry_msgs/msg/pose2_d.hpp"
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 #include <neo_srvs2/srv/optimizer.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/thread.hpp>
 
 namespace neo_mpc_planner {
 
@@ -133,7 +120,7 @@ public:
    * or in absolute values in false case.
    */
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
-	
+  
   int shareCostMap();
 
 private:
@@ -143,23 +130,23 @@ private:
     geometry_msgs::msg::PoseStamped & out_pose) const;
   
   geometry_msgs::msg::PoseStamped getLookAheadPoint(
-  	const double & lookahead_dist,
-  	const nav_msgs::msg::Path & transformed_plan);
+    const double & lookahead_dist,
+    const nav_msgs::msg::Path & transformed_plan);
   
-	nav_msgs::msg::Path global_plan_;
-	std::shared_ptr<tf2_ros::Buffer> tf_;
+  nav_msgs::msg::Path global_plan_;
+  std::shared_ptr<tf2_ros::Buffer> tf_;
   std::string plugin_name_;
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
-	geometry_msgs::msg::TwistStamped m_last_cmd_vel;
+  geometry_msgs::msg::TwistStamped m_last_cmd_vel;
   nav2_costmap_2d::Costmap2D * costmap_;
   rclcpp::Logger logger_ {rclcpp::get_logger("MPC")};
   rclcpp::Clock::SharedPtr clock_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_path_pub_;
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
-	tf2::Duration transform_tolerance_;
-	rclcpp::Client<neo_srvs2::srv::Optimizer>::SharedPtr client;
+  tf2::Duration transform_tolerance_;
+  rclcpp::Client<neo_srvs2::srv::Optimizer>::SharedPtr client;
 
-	std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
+  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
   carrot_pub_;
 
   std::unique_ptr<geometry_msgs::msg::PointStamped> createCarrotMsg(
@@ -167,16 +154,16 @@ private:
 
   double getLookAheadDistance(const geometry_msgs::msg::Twist & speed);
 
-	geometry_msgs::msg::Pose goal_pose;
-	bool closer_to_goal = false;
-	bool slow_down_ = true;
-	bool no_slow_down_ = true;
-	
-	double lookahead_dist_min_ = 0.0;
-	double lookahead_dist_max_ = 0.0;
-	double lookahead_dist_close_to_goal_ = 0.0;
+  geometry_msgs::msg::Pose goal_pose;
+  bool closer_to_goal = false;
+  bool slow_down_ = true;
+  bool no_slow_down_ = true;
+  
+  double lookahead_dist_min_ = 0.0;
+  double lookahead_dist_max_ = 0.0;
+  double lookahead_dist_close_to_goal_ = 0.0;
 
-	std::unique_ptr<nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>
+  std::unique_ptr<nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>
   collision_checker_;
 };
 

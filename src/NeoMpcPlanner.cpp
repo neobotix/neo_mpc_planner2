@@ -55,7 +55,7 @@ namespace neo_mpc_planner {
 
 double createYawFromQuat(const geometry_msgs::msg::Quaternion & orientation)
 {
-	tf2::Quaternion q(orientation.x, orientation.y, orientation.z, orientation.w);
+  tf2::Quaternion q(orientation.x, orientation.y, orientation.z, orientation.w);
   tf2::Matrix3x3 m(q);
   double roll, pitch, yaw;
   m.getRPY(roll, pitch, yaw);
@@ -93,10 +93,10 @@ nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
   final_pose.header = global_plan_.header;
   final_pose.pose = global_plan_.poses[global_plan_.poses.size() - 1].pose;
   if (euclidean_distance(robot_pose, final_pose) <= lookahead_dist_close_to_goal_) {
-  	closer_to_goal = true;
+    closer_to_goal = true;
   }
   else {
-  	closer_to_goal = false;
+    closer_to_goal = false;
   }
   // Find points definitely outside of the costmap so we won't transform them.
   auto transformation_end = std::find_if(
@@ -162,10 +162,10 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 
   if (!slow_down_ || closer_to_goal)
   {
-  	lookahead_dist = lookahead_dist_max_;
-		if (closer_to_goal) {
-  		lookahead_dist = lookahead_dist_close_to_goal_;
-  	}
+    lookahead_dist = lookahead_dist_max_;
+    if (closer_to_goal) {
+      lookahead_dist = lookahead_dist_close_to_goal_;
+    }
   }
   return lookahead_dist;
 }
@@ -204,12 +204,12 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   const geometry_msgs::msg::Twist & speed,
   nav2_core::GoalChecker * goal_checker)
 {
-	auto transformed_plan = transformGlobalPlan(position);
+  auto transformed_plan = transformGlobalPlan(position);
 
   // Find look ahead distance and point on path and publish
   double lookahead_dist = getLookAheadDistance(speed);
 
-	// For now just for testing
+  // For now just for testing
   auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
 
   // check if the pose orientation and robot orientation greater than 180
@@ -218,20 +218,20 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
     position.pose.position.x, position.pose.position.y, tf2::getYaw(position.pose.orientation), costmap_ros_->getRobotFootprint());
 
   if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) < 1.0) {
-  	slow_down_ = false;
-  	// Check if the robot can speed up once again, so that there is no oscillations between the lookaheads
-  	auto check_pose_up = getLookAheadPoint(0.4, transformed_plan);
-  	if (fabs(createYawFromQuat(check_pose_up.pose.orientation)) > 1.0 and footprint_cost > 200) {
-  		slow_down_ = true;
-  	}
+    slow_down_ = false;
+    // Check if the robot can speed up once again, so that there is no oscillations between the lookaheads
+    auto check_pose_up = getLookAheadPoint(lookahead_dist, transformed_plan);
+    if (fabs(createYawFromQuat(check_pose_up.pose.orientation)) > 1.0 and footprint_cost > 200) {
+      slow_down_ = true;
+    }
   } else if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) >= 1.0 and footprint_cost > 200) {
-		slow_down_ = true;
+    slow_down_ = true;
   } else {
-  	slow_down_ = false;
+    slow_down_ = false;
   }
 
   if (footprint_cost == 255) {
-  	throw nav2_core::PlannerException("MPC detected collision!");
+    throw nav2_core::PlannerException("MPC detected collision!");
   }
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
@@ -245,11 +245,11 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 
   auto result = client->async_send_request(request);
 
-	auto out = result.get();
-	geometry_msgs::msg::TwistStamped cmd_vel_final;
-	cmd_vel_final = out->output_vel; 
+  auto out = result.get();
+  geometry_msgs::msg::TwistStamped cmd_vel_final;
+  cmd_vel_final = out->output_vel; 
 
-	return cmd_vel_final;
+  return cmd_vel_final;
 }
 
 void NeoMpcPlanner::cleanup()
@@ -258,8 +258,8 @@ void NeoMpcPlanner::cleanup()
 
 void NeoMpcPlanner::activate()
 {
-	  global_path_pub_->on_activate();
-	  carrot_pub_->on_activate();
+  global_path_pub_->on_activate();
+  carrot_pub_->on_activate();
 }
 
 void NeoMpcPlanner::deactivate()
@@ -270,7 +270,7 @@ void NeoMpcPlanner::setPlan(const nav_msgs::msg::Path & plan)
 {
   global_plan_ = plan;
   if (goal_pose != plan.poses[plan.poses.size() - 1].pose) {
-  	slow_down_ = true;
+    slow_down_ = true;
   }
   goal_pose = plan.poses[plan.poses.size() - 1].pose;
 }
@@ -284,7 +284,7 @@ void NeoMpcPlanner::setSpeedLimit(
 
 void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,  std::string name, const std::shared_ptr<tf2_ros::Buffer> & tf,  const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> & costmap_ros)
 {
-	auto node = parent.lock();
+  auto node = parent.lock();
   node_ = parent;
   if (!node) {
     throw nav2_core::PlannerException("Unable to lock node!");

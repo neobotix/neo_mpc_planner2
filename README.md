@@ -17,6 +17,7 @@ The entire planner is built on the Navigation2 stack for ROS-2. Currently, we su
 
 Python 3.8.10
 Scipy 1.6.3
+neo_nav2_py_costmap2D (https://github.com/neobotix/neo_nav2_py_costmap2D)
 
 ## Sample Parameters
 
@@ -74,3 +75,5 @@ mpc_optimization_server:
 Note that the mpc_optimization server is a seperate node, since the optimization depends on the Scipy library. 
 
 In the near future we plan to migrate the optimization process to C++. 
+
+Special mention: Some of the code from nav2_regulated_pure_pursuit controller has been reused, since the neo_mpc_planner2 works on the principle of pure-pursuit as well. Thanks to the Nav2 team for that. 
