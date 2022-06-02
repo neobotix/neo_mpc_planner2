@@ -1,4 +1,5 @@
 # neo_mpc_planner2
+<img src="https://user-images.githubusercontent.com/20242192/171641578-05abb9d7-1fa3-4756-a0df-1778a192fb5e.gif" width="700" /> 
 
 The Model Predictive Control (MPC) is an optimization-based feedback control technique, which was initially developed for the field of process industries. With the recent advancements in cost-effective computation, MPC was extended to the field of robotics for real-time control. This means that the optimization happens on the fly. MPC otherwise also called as the Receding Horizon Control (RHC) is utilized in robots for the purpose of path following and / or trajectory tracking.
 
