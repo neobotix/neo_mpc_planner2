@@ -11,7 +11,7 @@
     <author>Pradheep Padmanabhan</author>
     <author>Padmanabhan@neobotix.de</author>
     <maintainer email="padmanabhan@neobotix.de">Pradheep Padmanabhan</maintainer>
-    <license>BSD</license>
+    <license>MIT</license>
     <url>http://wiki.ros.org/base_local_planner</url>
 
     <buildtool_depend>ament_cmake</buildtool_depend>
