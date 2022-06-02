@@ -6,6 +6,12 @@ neo_mpc_planner2 is exclusively developed for quasi-omnidirectional robots such 
 
 The entire planner is built on the Navigation2 stack for ROS-2. Currently, we support omni-directional robots and later will be extended to differential robots. 
 
+## Working
+
+1. With smac_planner (Simulation):
+
+<img src="https://user-images.githubusercontent.com/20242192/171638805-ea465629-5c95-4c5c-8ac0-7cb93e8d2fdd.gif" width="700" /> 
+
 ## Dependencies 
 
 Python 3.8.10
