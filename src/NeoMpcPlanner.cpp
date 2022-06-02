@@ -63,6 +63,16 @@ using namespace std::chrono_literals;
 
 namespace neo_mpc_planner {
 
+double createYawFromQuat(const geometry_msgs::msg::Quaternion & orientation)
+{
+	tf2::Quaternion q(orientation.x, orientation.y, orientation.z, orientation.w);
+  tf2::Matrix3x3 m(q);
+  double roll, pitch, yaw;
+  m.getRPY(roll, pitch, yaw);
+  return yaw;
+}
+
+
 nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
   const geometry_msgs::msg::PoseStamped & pose)
 {
@@ -89,6 +99,15 @@ nav_msgs::msg::Path NeoMpcPlanner::transformGlobalPlan(
       return euclidean_distance(robot_pose, ps);
     });
 
+  geometry_msgs::msg::PoseStamped final_pose;
+  final_pose.header = global_plan_.header;
+  final_pose.pose = global_plan_.poses[global_plan_.poses.size() - 1].pose;
+  if (euclidean_distance(robot_pose, final_pose) <= lookahead_dist_close_to_goal_) {
+  	closer_to_goal = true;
+  }
+  else {
+  	closer_to_goal = false;
+  }
   // Find points definitely outside of the costmap so we won't transform them.
   auto transformation_end = std::find_if(
     transformation_begin, end(global_plan_.poses),
@@ -149,12 +168,15 @@ double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & spe
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
   // Else, use the static look ahead distance
-  double lookahead_dist = 0.7;
+  double lookahead_dist = lookahead_dist_min_;
 
-  // if ( abs(speed.linear.x) > 0.0 && abs(speed.linear.y) > 0.0) {
-  // 	lookahead_dist = 0.4;
-  // }
- 
+  if (!slow_down_ || closer_to_goal)
+  {
+  	lookahead_dist = lookahead_dist_max_;
+		if (closer_to_goal) {
+  		lookahead_dist = lookahead_dist_close_to_goal_;
+  	}
+  }
   return lookahead_dist;
 }
 
@@ -200,6 +222,28 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
 	// For now just for testing
   auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
 
+  // check if the pose orientation and robot orientation greater than 180
+  // change the lookahead accordingly
+  double footprint_cost = collision_checker_->footprintCostAtPose(
+    position.pose.position.x, position.pose.position.y, tf2::getYaw(position.pose.orientation), costmap_ros_->getRobotFootprint());
+
+  if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) < 1.0) {
+  	slow_down_ = false;
+  	// Check if the robot can speed up once again, so that there is no oscillations between the lookaheads
+  	auto check_pose_up = getLookAheadPoint(0.4, transformed_plan);
+  	if (fabs(createYawFromQuat(check_pose_up.pose.orientation)) > 1.0 and footprint_cost > 200) {
+  		slow_down_ = true;
+  	}
+  } else if (fabs(createYawFromQuat(carrot_pose.pose.orientation)) >= 1.0 and footprint_cost > 200) {
+		slow_down_ = true;
+  } else {
+  	slow_down_ = false;
+  }
+
+  if (footprint_cost == 255) {
+  	throw nav2_core::PlannerException("MPC detected collision!");
+  }
+
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
 
   auto request = std::make_shared<neo_srvs2::srv::Optimizer::Request>();
@@ -207,13 +251,15 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   request->carrot_pose = carrot_pose;
   request->goal_pose = goal_pose;
   request->current_pose = position;
+  request->switch_opt = closer_to_goal;
 
   auto result = client->async_send_request(request);
 
 	auto out = result.get();
 	geometry_msgs::msg::TwistStamped cmd_vel_final;
 	cmd_vel_final = out->output_vel; 
-  return cmd_vel_final;
+
+	return cmd_vel_final;
 }
 
 void NeoMpcPlanner::cleanup()
@@ -233,6 +279,9 @@ void NeoMpcPlanner::deactivate()
 void NeoMpcPlanner::setPlan(const nav_msgs::msg::Path & plan)
 {
   global_plan_ = plan;
+  if (goal_pose != plan.poses[plan.poses.size() - 1].pose) {
+  	slow_down_ = true;
+  }
   goal_pose = plan.poses[plan.poses.size() - 1].pose;
 }
 
@@ -260,17 +309,30 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
   client = node->create_client<neo_srvs2::srv::Optimizer>("optimizer");
   global_path_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
 
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".lookahead_dist_min", rclcpp::ParameterValue(0.5));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".lookahead_dist_max", rclcpp::ParameterValue(0.5));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".lookahead_dist_close_to_goal", rclcpp::ParameterValue(0.5));
+
+  node->get_parameter(plugin_name_ + ".lookahead_dist_min", lookahead_dist_min_);
+  node->get_parameter(plugin_name_ + ".lookahead_dist_max", lookahead_dist_max_);
+  node->get_parameter(
+    plugin_name_ + ".lookahead_dist_close_to_goal",
+    lookahead_dist_close_to_goal_);
+
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
       RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Interrupted while waiting for the service. Exiting.");
     }
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
   }
-  
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
+  collision_checker_ = std::make_unique<nav2_costmap_2d::
+      FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>(costmap_);
 }
 
-}
-// neo_mpc_planner
+} // neo_mpc_planner
 
 PLUGINLIB_EXPORT_CLASS(neo_mpc_planner::NeoMpcPlanner, nav2_core::Controller)

@@ -32,8 +32,8 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  *********************************************************************/
 
-#ifndef INCLUDE_NEOLOCALPLANNER_H_
-#define INCLUDE_NEOLOCALPLANNER_H_
+#ifndef INCLUDE_NEOMPCPLANNER_H_
+#define INCLUDE_NEOMPCPLANNER_H_
 
 #include <tf2_ros/buffer.h>
 // #include <dynamic_reconfigure/server.h>
@@ -48,6 +48,7 @@
 
 #include "nav2_core/controller.hpp"
 #include "nav2_util/geometry_utils.hpp"
+#include "nav2_costmap_2d/footprint_collision_checker.hpp"
 #include "nav2_util/lifecycle_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "pluginlib/class_loader.hpp"
@@ -58,7 +59,6 @@
 #include <neo_srvs2/srv/optimizer.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/thread.hpp>
-
 
 namespace neo_mpc_planner {
 
@@ -134,6 +134,8 @@ public:
    */
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 	
+  int shareCostMap();
+
 private:
   nav_msgs::msg::Path transformGlobalPlan(const geometry_msgs::msg::PoseStamped & pose);
   
@@ -143,13 +145,14 @@ private:
   geometry_msgs::msg::PoseStamped getLookAheadPoint(
   	const double & lookahead_dist,
   	const nav_msgs::msg::Path & transformed_plan);
-	
+  
 	nav_msgs::msg::Path global_plan_;
 	std::shared_ptr<tf2_ros::Buffer> tf_;
   std::string plugin_name_;
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
+	geometry_msgs::msg::TwistStamped m_last_cmd_vel;
   nav2_costmap_2d::Costmap2D * costmap_;
-  rclcpp::Logger logger_ {rclcpp::get_logger("RegulatedPurePursuitController")};
+  rclcpp::Logger logger_ {rclcpp::get_logger("MPC")};
   rclcpp::Clock::SharedPtr clock_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_path_pub_;
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
@@ -165,9 +168,19 @@ private:
   double getLookAheadDistance(const geometry_msgs::msg::Twist & speed);
 
 	geometry_msgs::msg::Pose goal_pose;
+	bool closer_to_goal = false;
+	bool slow_down_ = true;
+	bool no_slow_down_ = true;
+	
+	double lookahead_dist_min_ = 0.0;
+	double lookahead_dist_max_ = 0.0;
+	double lookahead_dist_close_to_goal_ = 0.0;
+
+	std::unique_ptr<nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>
+  collision_checker_;
 };
 
 
 } // neo_local_planner
 
-#endif /* INCLUDE_NEOLOCALPLANNER_H_ */
+#endif /* INCLUDE_NEOMPCPLANNER_H_ */
