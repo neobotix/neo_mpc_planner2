@@ -58,22 +58,39 @@ mpc_optimization_server:
     max_vel_y: 0.7
     max_vel_trans: 0.7
     max_vel_theta: 0.7
+    # Translation error weight 
     w_trans: 0.82
+    # Orientation error weight 
     w_orient: 0.50
+    # Control error weight 
     w_control: 0.05
+    # Terminal weight 
     w_terminal: 0.05
+    # Footprint weight 
     w_footprint: 0
+    # Costmap weight 
     w_costmap: 0.05
+    # Waiting time before the robot can try a maneuver, after it had been stuck in the obstacle  
     waiting_time: 3.0
     low_pass_gain: 0.5
+    # Optimization tolerance, smaller it is, slower the performance
     opt_tolerance: 1e-3
+    # Time period, upto which MPC has to predict the control commands 
     prediction_horizon: 0.8
+    # Number of steps that the prediction horizon needs to be splitted into
     control_steps: 3
 
 ```
 
-Note that the mpc_optimization server is a seperate node, since the optimization depends on the Scipy library. 
+In the scenarios, where the global planner tries to make the robot to move through a narrow path, it is suggested to the users to set a short `lookahead_dist_min` and `lookahead_dist_max` distance, so that the robot can slow down and navigate through the narrow path without ending up in scanner stop. Of course, the speed depends upon the predicition horizon and the control steps as well.
+
+Note that the mpc_optimization server is a seperate node, since the optimization depends on the Scipy library. If mpc_optimization node is being used, make sure also to point the node to the parameter file. An example would be:
+
+```ros2 run neo_mpc_planner2 mpc_optimization_server.py --ros-args --params-file src/neo_simulation2/configs/mpo_700/navigation.yaml```
 
 In the near future we plan to migrate the optimization process to C++. 
 
+Feel free to open an issue for any feature requests or bugs. 
+
 Special mention: Some of the code from nav2_regulated_pure_pursuit controller has been reused, since the neo_mpc_planner2 works on the principle of pure-pursuit as well. Thanks to the Nav2 team for that. 
+
