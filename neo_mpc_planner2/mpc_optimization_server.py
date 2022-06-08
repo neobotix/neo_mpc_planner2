@@ -34,7 +34,7 @@ from functools import partial
 import time
 from neo_nav2_py_costmap2D.line_iterator import LineIterator
 from neo_nav2_py_costmap2D.costmap import Costmap2d
-from geometry_msgs.msg import PolygonStamped
+from geometry_msgs.msg import PolygonStamped, Polygon
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -71,6 +71,7 @@ class MpcOptimizationServer(Node):
 		self.declare_parameter('prediction_horizon', value = 0.5)
 		# self.declare_parameter('control_horizon', value = 0.5)
 		self.declare_parameter('control_steps', value = 3)
+		self.declare_parameter('control_steps_wo_opt', value = 2)
 
 		# Get Parameters
 		self.acc_x_limit = self.get_parameter('acc_x_limit').value
@@ -98,6 +99,7 @@ class MpcOptimizationServer(Node):
 		self.opt_tolerance = self.get_parameter('opt_tolerance').value
 		self.prediction_horizon= self.get_parameter('prediction_horizon').value
 		self.no_ctrl_steps = self.get_parameter('control_steps').value
+		self.no_ctrl_steps_wo_opt = self.get_parameter('control_steps_wo_opt').value
 		self.waiting_time = self.get_parameter('waiting_time').value
 
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
@@ -219,8 +221,6 @@ class MpcOptimizationServer(Node):
 		
 		for i in range((self.no_ctrl_steps)):
 			self.costmap_cost = 0
-			update_footprint = Polygon()
-			update_footprint.points = self.footprint.points
 
 			# Update the position for the predicted velocity
 			self.z += cmd_vel[2+3*i] *  self.dt
@@ -231,14 +231,6 @@ class MpcOptimizationServer(Node):
 			pos_x += cmd_vel[0+3*i] *np.cos(odom_yaw) *  self.dt  - cmd_vel[1+3*i] * np.sin(odom_yaw) *  self.dt
 			pos_y += cmd_vel[0+3*i] *np.sin(odom_yaw) *  self.dt  + cmd_vel[1+3*i] * np.cos(odom_yaw) *  self.dt
 			
-			for j in range(0, len(self.footprint.points)):
-				a = self.footprint.points[j].x
-				b = self.footprint.points[j].y
-				update_footprint.points[j].x = self.x + self.footprint.points[j].x * np.cos(self.z)  - self.footprint.points[j].y * np.sin(self.z) 
-				update_footprint.points[j].y = self.y + self.footprint.points[j].x * np.sin(self.z)  + self.footprint.points[j].y * np.cos(self.z) 
-				self.footprint.points[j].x = a
-				self.footprint.points[j].y = b
-
 			mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
 			self.costmap_cost += self.costmap_ros.getCost(mx1, my1) ** 2
 
@@ -255,8 +247,8 @@ class MpcOptimizationServer(Node):
 			else:
 				self.cost_total +=  self.w_costmap_scale * self.costmap_cost / self.no_ctrl_steps
 			
-			if(self.costmap_ros.getFootprintCost(update_footprint) == 1.0):
-				self.cost_total += (self.costmap_ros.getFootprintCost(update_footprint)**2) * self.w_footprint_scale / self.no_ctrl_steps
+			if (self.costmap_ros.getFootprintCostAtPose(self.x, self.y, self.z, self.footprint) == 1.0):
+				self.cost_total += self.costmap_ros.getFootprintCostAtPose(self.x, self.y, self.z, self.footprint) * 1000 / self.no_ctrl_steps
 
 		# iii) terminal self.cost
 		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
@@ -286,7 +278,10 @@ class MpcOptimizationServer(Node):
 		pose.pose.position.y = pos_y
 		self.local_plan.poses.append(pose)
 
-		for i in range((self.no_ctrl_steps)):
+		for i in range((self.no_ctrl_steps_wo_opt)):
+			x = np.append(x, np.array([x[-3], x[-2], x[-1]]))
+
+		for i in range((self.no_ctrl_steps + self.no_ctrl_steps_wo_opt)):
 			pose = PoseStamped()
 			yaw += x[2+3*i] * self.dt
 			pos_x += x[3*i]*np.cos(yaw) * self.dt - x[1+3*i]*np.sin(yaw) * self.dt
@@ -308,6 +303,7 @@ class MpcOptimizationServer(Node):
 	def collision_check(self, x):
 		# Collision check with footprint
 		footprint = self.footprint
+		footprint_col = self.footprint
 		pos_x = self.current_pose.pose.position.x
 		pos_y = self.current_pose.pose.position.y
 		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
@@ -316,31 +312,37 @@ class MpcOptimizationServer(Node):
 		pose.pose.position.x = pos_x
 		pose.pose.position.y = pos_y
 
-		for i in range((self.no_ctrl_steps)):
+		for i in range((self.no_ctrl_steps_wo_opt)):
+			x = np.append(x, np.array([x[-3]/2.0, x[-2]/2.0, x[-1]]))
+
+		for i in range((self.no_ctrl_steps + self.no_ctrl_steps_wo_opt) - 1):
 			pose = PoseStamped()
-			odom_yaw += x[2+3*i] * self.dt
-			pos_x += x[3*i]*np.cos(odom_yaw) * self.dt - x[1+3*i]*np.sin(odom_yaw) * self.dt
-			pos_y += x[3*i]*np.sin(odom_yaw) * self.dt + x[1+3*i]*np.cos(odom_yaw) * self.dt   
+			odom_yaw_origin = x[2+3*i] * self.dt
+			pos_x_origin = x[3*i]*np.cos(odom_yaw) * self.dt - x[1+3*i]*np.sin(odom_yaw) * self.dt
+			pos_y_origin = x[3*i]*np.sin(odom_yaw) * self.dt + x[1+3*i]*np.cos(odom_yaw) * self.dt
+			odom_yaw += odom_yaw_origin   
+			pos_x += pos_x_origin
+			pos_y += pos_y_origin
 			pose.pose.position.x = pos_x
 			pose.pose.position.y = pos_y
 			pose.header.stamp = self.get_clock().now().to_msg()
 			q = self.quaternion_from_euler(0, 0, odom_yaw)
 			mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
 			col = self.costmap_ros.getCost(mx1, my1)
+			col_footprint = self.costmap_ros.getFootprintCostAtPose(pos_x_origin, pos_y_origin, odom_yaw_origin, footprint_col)
 			pose.pose.orientation.w = q[0]
 			pose.pose.orientation.x = q[1]
 			pose.pose.orientation.y = q[2]
 			pose.pose.orientation.z = q[3]
-			if (col >= 0.99):
+			if (col >= 0.99 and col_footprint >= 0.99):
 				self.collision = True
 				print("Collision ahead, stopping the robot")
 				break
-
-		if (self.costmap_ros.getFootprintCost(footprint) == 1.0):
-			self.collision_footprint = True
-			print("Footprint in collision, stopping the robot")
-		else:
-			self.collision_footprint = False
+			if (col_footprint == 1.0):
+				self.collision_footprint = True
+				print("Footprint in collision, stopping the robot")
+			else:
+				self.collision_footprint = False
 
 	def optimizer(self, request, response):
 		self.current_pose = request.current_pose
