@@ -219,8 +219,8 @@ class MpcOptimizationServer(Node):
 		
 		for i in range((self.no_ctrl_steps)):
 			self.costmap_cost = 0
-			footprintss = Polygon()
-			footprintss.points = self.footprint.points
+			update_footprint = Polygon()
+			update_footprint.points = self.footprint.points
 
 			# Update the position for the predicted velocity
 			self.z += cmd_vel[2+3*i] *  self.dt
@@ -234,8 +234,8 @@ class MpcOptimizationServer(Node):
 			for j in range(0, len(self.footprint.points)):
 				a = self.footprint.points[j].x
 				b = self.footprint.points[j].y
-				footprintss.points[j].x = self.x + self.footprint.points[j].x * np.cos(self.z)  - self.footprint.points[j].y * np.sin(self.z) 
-				footprintss.points[j].y = self.y + self.footprint.points[j].x * np.sin(self.z)  + self.footprint.points[j].y * np.cos(self.z) 
+				update_footprint.points[j].x = self.x + self.footprint.points[j].x * np.cos(self.z)  - self.footprint.points[j].y * np.sin(self.z) 
+				update_footprint.points[j].y = self.y + self.footprint.points[j].x * np.sin(self.z)  + self.footprint.points[j].y * np.cos(self.z) 
 				self.footprint.points[j].x = a
 				self.footprint.points[j].y = b
 
@@ -255,8 +255,8 @@ class MpcOptimizationServer(Node):
 			else:
 				self.cost_total +=  self.w_costmap_scale * self.costmap_cost / self.no_ctrl_steps
 			
-			if(self.costmap_ros.getFootprintCost(footprintss) == 1.0):
-				self.cost_total += (self.costmap_ros.getFootprintCost(footprintss)**2) * self.w_footprint_scale / self.no_ctrl_steps
+			if(self.costmap_ros.getFootprintCost(update_footprint) == 1.0):
+				self.cost_total += (self.costmap_ros.getFootprintCost(update_footprint)**2) * self.w_footprint_scale / self.no_ctrl_steps
 
 		# iii) terminal self.cost
 		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
