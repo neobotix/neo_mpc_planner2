@@ -286,9 +286,6 @@ class MpcOptimizationServer(Node):
 		pose.pose.position.y = pos_y
 		self.local_plan.poses.append(pose)
 
-		for i in range((self.no_ctrl_steps) - 2):
-			x = np.append(x, np.array([x[3 * i], x[1 + 3*i], x[2 + 3*i]]))
-
 		for i in range((self.no_ctrl_steps)):
 			pose = PoseStamped()
 			yaw += x[2+3*i] * self.dt
@@ -318,9 +315,6 @@ class MpcOptimizationServer(Node):
 		pose = PoseStamped()
 		pose.pose.position.x = pos_x
 		pose.pose.position.y = pos_y
-
-		for i in range((self.no_ctrl_steps) - 2):
-			x = np.append(x, np.array([x[3 * i], x[1 + 3*i], x[2 + 3*i]]))
 
 		for i in range((self.no_ctrl_steps)):
 			pose = PoseStamped()
