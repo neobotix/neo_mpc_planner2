@@ -18,6 +18,7 @@ The entire planner is built on the Navigation2 stack for ROS-2. Currently, we su
 Python 3.8.10
 Scipy 1.6.3
 neo_nav2_py_costmap2D (https://github.com/neobotix/neo_nav2_py_costmap2D)
+neo_srvs2
 
 ## Sample Parameters
 
