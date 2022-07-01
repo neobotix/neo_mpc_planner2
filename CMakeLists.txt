@@ -18,7 +18,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(neo_srvs2 REQUIRED)
 find_package(rclpy REQUIRED)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 
 include_directories(
   include
