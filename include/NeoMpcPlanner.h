@@ -162,6 +162,7 @@ private:
   double lookahead_dist_min_ = 0.0;
   double lookahead_dist_max_ = 0.0;
   double lookahead_dist_close_to_goal_ = 0.0;
+  double control_frequency = 0.0;
 
   std::unique_ptr<nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>
   collision_checker_;
