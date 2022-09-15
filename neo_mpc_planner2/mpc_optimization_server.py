@@ -146,6 +146,7 @@ class MpcOptimizationServer(Node):
 		self.collision_footprint = False
 		self.tf_buffer = Buffer()
 		self.tf_listener = TransformListener(self.tf_buffer, self)
+		self.control_interval = 0.0;
 
 	def footprint_callback(self, msg):
 		self.footprint = msg.polygon
@@ -348,6 +349,7 @@ class MpcOptimizationServer(Node):
 		self.current_velocity = request.current_vel
 		self.goal_pose = request.goal_pose
 		self.update_opt_param = request.switch_opt
+		self.control_interval = request.control_interval
 
 		# on new goal reset all the flags and initializers
 		if (self.old_goal != self.goal_pose):
@@ -377,13 +379,13 @@ class MpcOptimizationServer(Node):
 				self.waiting_time = 0.0
 		else:
 			# avoiding sudden jerks and inertia
-			temp_x = np.sign(x.x[0]) * np.fmin(abs(x.x[0]), abs(self.last_control[0]) + self.acc_x_limit * self.dt)
-			temp_y = np.sign(x.x[1]) * np.fmin(abs(x.x[1]), abs(self.last_control[1]) + self.acc_y_limit * self.dt) 
-			temp_z = np.sign(x.x[2]) * np.fmin(abs(x.x[2]), abs(self.last_control[2]) + self.acc_theta_limit * self.dt)
+			temp_x = np.fmin(x.x[0], self.last_control[0] + self.acc_x_limit * self.control_interval)
+			temp_y = np.fmin(x.x[1], self.last_control[1] + self.acc_y_limit * self.control_interval) 
+			temp_z = np.fmin(x.x[2], self.last_control[2] + self.acc_theta_limit * self.control_interval)
 
-			response.output_vel.twist.linear.x = np.sign(temp_x) * np.fmax(abs(temp_x), abs(self.last_control[0]) - self.acc_x_limit * self.dt)
-			response.output_vel.twist.linear.y = np.sign(temp_y) * np.fmax(abs(temp_y), abs(self.last_control[1]) - self.acc_y_limit * self.dt) 
-			response.output_vel.twist.angular.z = np.sign(temp_z) * np.fmax(abs(temp_z), abs(self.last_control[2]) - self.acc_theta_limit * self.dt)
+			response.output_vel.twist.linear.x = np.fmax(temp_x, self.last_control[0] - self.acc_x_limit * self.control_interval)
+			response.output_vel.twist.linear.y = np.fmax(temp_y, self.last_control[1] - self.acc_y_limit * self.control_interval) 
+			response.output_vel.twist.angular.z = np.fmax(temp_z, self.last_control[2] - self.acc_theta_limit * self.control_interval)
 
 		self.last_control[0] = response.output_vel.twist.linear.x 
 		self.last_control[1] = response.output_vel.twist.linear.y 
