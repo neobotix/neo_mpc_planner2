@@ -242,6 +242,7 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   request->goal_pose = goal_pose;
   request->current_pose = position;
   request->switch_opt = closer_to_goal;
+  request->control_interval = 1.0 / control_frequency;
 
   auto result = client->async_send_request(request);
 
@@ -311,6 +312,7 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
   node->get_parameter(
     plugin_name_ + ".lookahead_dist_close_to_goal",
     lookahead_dist_close_to_goal_);
+  node->get_parameter("controller_frequency", control_frequency);
 
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
