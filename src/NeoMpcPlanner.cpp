@@ -26,8 +26,8 @@ SOFTWARE.
 
 #include <tf2/utils.h>
 #include "nav2_util/node_utils.hpp"
-#include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_sensor_msgs/tf2_sensor_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <vector>
 #include "nav2_util/line_iterator.hpp"
 #include "nav2_core/goal_checker.hpp"
@@ -37,7 +37,7 @@ SOFTWARE.
 #include "nav2_costmap_2d/costmap_filters/filter_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include <algorithm>
-#include <tf2_eigen/tf2_eigen.hpp>
+#include <tf2_eigen/tf2_eigen.h>
 #include <chrono>
 
 using std::hypot;
