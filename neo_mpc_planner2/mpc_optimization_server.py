@@ -421,6 +421,18 @@ class MpcOptimizationServer(Node):
 					self.max_vel_trans = parameter.value
 				elif parameter.name == "max_vel_theta":
 					self.max_vel_theta = parameter.value
+				elif parameter.name == "w_trans":
+					self.w_trans = parameter.value
+				elif parameter.name == "w_orient":
+					self.w_orient = parameter.value
+				elif parameter.name == "w_control":
+					self.w_control = parameter.value
+				elif parameter.name == "w_terminal":
+					self.w_terminal = parameter.value
+				elif parameter.name == "w_costmap":
+					self.w_costmap = parameter.value
+				elif parameter.name == "w_footprint":
+					self.w_footprint = parameter.value
 				else:
 					print("The selected parameter cannot be dynamically changed")
 
