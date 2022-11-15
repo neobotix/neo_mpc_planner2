@@ -38,6 +38,8 @@ from geometry_msgs.msg import PolygonStamped
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
+from rcl_interfaces.msg import SetParametersResult
+from rclpy.parameter import Parameter
 
 class MpcOptimizationServer(Node):
 	def __init__(self):
@@ -101,6 +103,7 @@ class MpcOptimizationServer(Node):
 		self.waiting_time = self.get_parameter('waiting_time').value
 
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
+		self.add_on_set_parameters_callback(self.cb_params)
 		self.PubRaysPath = self.create_publisher(Path, 'local_plan', 10)
 		self.Pubfootprint = self.create_publisher(PolygonStamped, 'predicted_footprint', 10)
 		self.current_pose = Pose()
@@ -398,6 +401,42 @@ class MpcOptimizationServer(Node):
 
 		self.old_goal = self.goal_pose
 		return response
+
+	def cb_params(self, data):
+		for parameter in data:
+			if parameter.type_ == Parameter.Type.DOUBLE:
+				if parameter.name == "min_vel_x":
+					self.min_vel_x = parameter.value
+				elif parameter.name == "min_vel_y":
+					self.min_vel_y = parameter.value
+				elif parameter.name == "min_vel_trans":
+					self.min_vel_trans = parameter.value
+				elif parameter.name == "min_vel_theta":
+					self.min_vel_theta = parameter.value
+				elif parameter.name == "max_vel_x":
+					self.max_vel_x = parameter.value
+				elif parameter.name == "max_vel_y":
+					self.max_vel_y = parameter.value
+				elif parameter.name == "max_vel_trans":
+					self.max_vel_trans = parameter.value
+				elif parameter.name == "max_vel_theta":
+					self.max_vel_theta = parameter.value
+				elif parameter.name == "w_trans":
+					self.w_trans = parameter.value
+				elif parameter.name == "w_orient":
+					self.w_orient = parameter.value
+				elif parameter.name == "w_control":
+					self.w_control = parameter.value
+				elif parameter.name == "w_terminal":
+					self.w_terminal = parameter.value
+				elif parameter.name == "w_costmap":
+					self.w_costmap = parameter.value
+				elif parameter.name == "w_footprint":
+					self.w_footprint = parameter.value
+				else:
+					print("The selected parameter cannot be dynamically changed")
+
+		return SetParametersResult(successful = True)
 
 def main(args=None):
 	rclpy.init(args = args)
