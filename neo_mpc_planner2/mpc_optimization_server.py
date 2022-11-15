@@ -436,6 +436,8 @@ class MpcOptimizationServer(Node):
 				else:
 					print("The selected parameter cannot be dynamically changed")
 
+		return SetParametersResult(successful = True)
+
 def main(args=None):
 	rclpy.init(args = args)
 	MpcOptimization = MpcOptimizationServer()
