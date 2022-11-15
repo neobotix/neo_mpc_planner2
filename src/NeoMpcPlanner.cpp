@@ -49,7 +49,7 @@ using nav2_util::geometry_utils::euclidean_distance;
 using namespace nav2_costmap_2d;  // NOLINT
 using rcl_interfaces::msg::ParameterType;
 using namespace std::chrono_literals;
-
+using std::placeholders::_1;
 
 namespace neo_mpc_planner {
 
@@ -204,6 +204,7 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   const geometry_msgs::msg::Twist & speed,
   nav2_core::GoalChecker * goal_checker)
 {
+  std::lock_guard<std::mutex> lock_reinit(mutex_);
   auto transformed_plan = transformGlobalPlan(position);
 
   // Find look ahead distance and point on path and publish
@@ -261,6 +262,9 @@ void NeoMpcPlanner::activate()
 {
   global_path_pub_->on_activate();
   carrot_pub_->on_activate();
+  auto node = node_.lock();
+  dyn_params_handler_ = node->add_on_set_parameters_callback(
+    std::bind(&NeoMpcPlanner::dynamicParametersCallback, this, std::placeholders::_1));
 }
 
 void NeoMpcPlanner::deactivate()
@@ -280,13 +284,17 @@ void NeoMpcPlanner::setSpeedLimit(
   const double & speed_limit,
   const bool & percentage)
 {
-  
+
 }
 
-void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,  std::string name, const std::shared_ptr<tf2_ros::Buffer> tf,  const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
+void NeoMpcPlanner::configure(
+  const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
+  std::string name, const std::shared_ptr<tf2_ros::Buffer> tf,
+  const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
 {
-  auto node = parent.lock();
   node_ = parent;
+  auto node = node_.lock();
+  
   if (!node) {
     throw nav2_core::ControllerException("Unable to lock node!");
   }
@@ -323,6 +331,48 @@ void NeoMpcPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr & p
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
   collision_checker_ = std::make_unique<nav2_costmap_2d::
       FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>(costmap_);
+}
+
+rcl_interfaces::msg::SetParametersResult
+NeoMpcPlanner::dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters)
+{
+  std::lock_guard<std::mutex> lock_reinit(mutex_);
+  rcl_interfaces::msg::SetParametersResult result;
+
+  for (auto parameter : parameters) {
+    const auto & type = parameter.get_type();
+    const auto & name = parameter.get_name();
+
+    // If we are trying to change the parameter of a plugin we can just skip it at this point
+    // as they handle parameter changes themselves and don't need to lock the mutex
+    if (name.find('.') != std::string::npos) {
+      continue;
+    }
+
+    if (!mutex_.try_lock()) {
+      RCLCPP_WARN(
+        logger_,
+        "Unable to dynamically change Parameters while the controller is currently running");
+      result.successful = false;
+      result.reason =
+        "Unable to dynamically change Parameters while the controller is currently running";
+      return result;
+    }
+
+    if (type == ParameterType::PARAMETER_DOUBLE) {
+      if (name == plugin_name_ + "lookahead_dist_min") {
+        lookahead_dist_min_ = parameter.as_double();
+      } else if (name == plugin_name_ + "lookahead_dist_max") {
+        lookahead_dist_max_ = parameter.as_double();
+      } else if (name == plugin_name_ + "lookahead_dist_close_to_goal") {
+        lookahead_dist_close_to_goal_ = parameter.as_double();
+      } 
+    }
+    mutex_.unlock();
+  }
+
+  result.successful = true;
+  return result;
 }
 
 } // neo_mpc_planner
