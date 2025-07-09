@@ -25,14 +25,13 @@ SOFTWARE.
 #include "../include/NeoMpcPlanner.h"
 
 #include <tf2/utils.h>
-#include "nav2_util/node_utils.hpp"
+#include "nav2_ros_common/node_utils.hpp"
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <vector>
 #include "nav2_util/line_iterator.hpp"
 #include "nav2_core/goal_checker.hpp"
 #include "nav2_core/controller_exceptions.hpp"
-#include "nav2_util/node_utils.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "nav2_costmap_2d/costmap_filters/filter_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
@@ -44,7 +43,7 @@ using std::hypot;
 using std::min;
 using std::max;
 using std::abs;
-using nav2_util::declare_parameter_if_not_declared;
+using nav2::declare_parameter_if_not_declared;
 using nav2_util::geometry_utils::euclidean_distance;
 using namespace nav2_costmap_2d;  // NOLINT
 using rcl_interfaces::msg::ParameterType;
@@ -245,11 +244,11 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   request->switch_opt = closer_to_goal;
   request->control_interval = 1.0 / control_frequency;
 
-  auto result = client->async_send_request(request);
-
-  auto out = result.get();
+  // Use nav2::ServiceClient API
+  auto future_result = client->async_call(request);
+  auto out = future_result.get();
   geometry_msgs::msg::TwistStamped cmd_vel_final;
-  cmd_vel_final = out->output_vel; 
+  cmd_vel_final = out->output_vel;
 
   return cmd_vel_final;
 }
@@ -288,7 +287,7 @@ void NeoMpcPlanner::setSpeedLimit(
 }
 
 void NeoMpcPlanner::configure(
-  const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
+  const nav2::LifecycleNode::WeakPtr & parent,
   std::string name, const std::shared_ptr<tf2_ros::Buffer> tf,
   const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
 {
@@ -308,11 +307,11 @@ void NeoMpcPlanner::configure(
   client = node->create_client<neo_srvs2::srv::Optimizer>("optimizer");
   global_path_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
 
-  declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     node, plugin_name_ + ".lookahead_dist_min", rclcpp::ParameterValue(0.5));
-  declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     node, plugin_name_ + ".lookahead_dist_max", rclcpp::ParameterValue(0.5));
-  declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     node, plugin_name_ + ".lookahead_dist_close_to_goal", rclcpp::ParameterValue(0.5));
 
   node->get_parameter(plugin_name_ + ".lookahead_dist_min", lookahead_dist_min_);

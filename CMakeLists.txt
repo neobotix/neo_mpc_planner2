@@ -25,22 +25,6 @@ include_directories(
   ${Boost_INCLUDE_DIRS}
 )
 
-set(dependencies
-  rclcpp
-  rclpy
-  geometry_msgs
-  nav2_costmap_2d
-  pluginlib
-  nav_msgs
-  nav2_util
-  nav2_core
-  tf2_ros
-  tf2_sensor_msgs
-  tf2_geometry_msgs
-  tf2_eigen
-  neo_srvs2
-)
-
 ament_python_install_package(${PROJECT_NAME})
 
 set(library_name neo_mpc_planner2)
@@ -48,8 +32,21 @@ set(library_name neo_mpc_planner2)
 add_library(${library_name} SHARED
         src/NeoMpcPlanner.cpp)
 
-ament_target_dependencies(${library_name}
-  ${dependencies}
+# Modern target_link_libraries approach for C++ dependencies only
+target_link_libraries(${library_name} PUBLIC
+  rclcpp::rclcpp
+  angles::angles
+  ${geometry_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
+  nav2_costmap_2d::nav2_costmap_2d_client
+  nav2_costmap_2d::nav2_costmap_2d_core
+  pluginlib::pluginlib
+  nav2_core::nav2_core
+  tf2_ros::tf2_ros
+  tf2_sensor_msgs::tf2_sensor_msgs
+  tf2_geometry_msgs::tf2_geometry_msgs
+  tf2_eigen::tf2_eigen
+  ${neo_srvs2_TARGETS}
 )
 
 install(DIRECTORY include/
@@ -70,7 +67,21 @@ install(PROGRAMS neo_mpc_planner2/mpc_optimization_server.py DESTINATION lib/${P
 
 ament_export_include_directories(include)
 ament_export_libraries(${library_name})
-ament_export_dependencies(${dependencies})
+ament_export_dependencies(
+  rclcpp
+  rclpy
+  geometry_msgs
+  nav2_costmap_2d
+  pluginlib
+  nav_msgs
+  nav2_util
+  nav2_core
+  tf2_ros
+  tf2_sensor_msgs
+  tf2_geometry_msgs
+  tf2_eigen
+  neo_srvs2
+)
 
 pluginlib_export_plugin_description_file(nav2_core neo_mpc_planner_plugin.xml)
 
