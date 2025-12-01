@@ -44,7 +44,6 @@ SOFTWARE.
 #include "pluginlib/class_loader.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "nav2_util/odometry_utils.hpp"
-#include "geometry_msgs/msg/pose2_d.hpp"
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 #include <neo_srvs2/srv/optimizer.hpp>
 
