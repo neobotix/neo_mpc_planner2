@@ -38,12 +38,12 @@ SOFTWARE.
 #include "nav2_core/controller.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "nav2_costmap_2d/footprint_collision_checker.hpp"
-#include "nav2_util/lifecycle_node.hpp"
+#include "nav2_ros_common/lifecycle_node.hpp"
+#include "nav2_ros_common/service_client.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "pluginlib/class_loader.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "nav2_util/odometry_utils.hpp"
-#include "geometry_msgs/msg/pose2_d.hpp"
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 #include <neo_srvs2/srv/optimizer.hpp>
 
@@ -70,7 +70,7 @@ public:
    * @param costmap_ros Costmap2DROS object of environment
    */
   void configure(
-    const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
+    const nav2::LifecycleNode::WeakPtr & parent,
     std::string name, const std::shared_ptr<tf2_ros::Buffer> tf,
     const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros) override;
 
@@ -144,13 +144,12 @@ private:
   nav2_costmap_2d::Costmap2D * costmap_;
   rclcpp::Logger logger_ {rclcpp::get_logger("MPC")};
   rclcpp::Clock::SharedPtr clock_;
-  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>> global_path_pub_;
-  rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
+  nav2::Publisher<nav_msgs::msg::Path>::SharedPtr global_path_pub_;
+  nav2::LifecycleNode::WeakPtr node_;
   tf2::Duration transform_tolerance_;
-  rclcpp::Client<neo_srvs2::srv::Optimizer>::SharedPtr client;
+  nav2::ServiceClient<neo_srvs2::srv::Optimizer>::SharedPtr client;
 
-  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
-  carrot_pub_;
+  nav2::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr carrot_pub_;
 
   std::unique_ptr<geometry_msgs::msg::PointStamped> createCarrotMsg(
     const geometry_msgs::msg::PoseStamped & carrot_pose);
