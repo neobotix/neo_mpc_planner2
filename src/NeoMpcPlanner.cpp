@@ -212,6 +212,9 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   // For now just for testing
   auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
 
+  // carrot_pose2 for determining the turn
+  auto carrot_pose2 = getLookAheadPoint(lookahead_dist2, transformed_plan);
+
   // check if the pose orientation and robot orientation greater than 180
   // change the lookahead accordingly
   double footprint_cost = collision_checker_->footprintCostAtPose(
@@ -230,6 +233,10 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
     slow_down_ = false;
   }
 
+  double delta_x = carrot_pose2.pose.position.x - carrot_pose.pose.position.x;
+  double delta_y = carrot_pose2.pose.position.y - carrot_pose.pose.position.y;
+  double target_yaw = std::atan2(delta_y, delta_x); // The desired orientation
+
   if (footprint_cost == 255) {
     throw nav2_core::ControllerException("MPC detected collision!");
   }
@@ -239,6 +246,7 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   auto request = std::make_shared<neo_srvs2::srv::Optimizer::Request>();
   request->current_vel = speed;
   request->carrot_pose = carrot_pose;
+  request->turn_yaw = target_yaw;
   request->goal_pose = goal_pose;
   request->current_pose = position;
   request->switch_opt = closer_to_goal;

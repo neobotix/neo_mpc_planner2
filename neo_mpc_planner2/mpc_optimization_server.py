@@ -121,6 +121,7 @@ class MpcOptimizationServer(Node):
 		self.update_y = 0.0
 		self.update_yaw = 0.0
 		self.size_x_ = 0
+		self.turn_yaw_ = 0.0
 
 		self.bnds  = list()
 		self.cons = []
@@ -248,7 +249,7 @@ class MpcOptimizationServer(Node):
 
 			# i) Evaluvating cost for error in displacement and orientation
 			step_dist_error =  np.linalg.norm(curr_pos - np.array((self.x, self.y)))
-			step_orient_error = target_yaw - self.z
+			step_orient_error = self.turn_yaw_ - self.z
 			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x , self.current_velocity.linear.y, \
 			self.current_velocity.angular.z )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps          
@@ -353,6 +354,7 @@ class MpcOptimizationServer(Node):
 		self.goal_pose = request.goal_pose
 		self.update_opt_param = request.switch_opt
 		self.control_interval = request.control_interval
+		self.turn_yaw_ = request.turn_yaw
 
 		# on new goal reset all the flags and initializers
 		if (self.old_goal != self.goal_pose):
