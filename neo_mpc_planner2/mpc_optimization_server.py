@@ -249,7 +249,12 @@ class MpcOptimizationServer(Node):
 
 			# i) Evaluvating cost for error in displacement and orientation
 			step_dist_error =  np.linalg.norm(curr_pos - np.array((self.x, self.y)))
-			step_orient_error = self.turn_yaw_ - self.z
+
+			if self.update_opt_param==False:
+				step_orient_error = self.turn_yaw_ - self.z
+			else:
+				step_orient_error = target_yaw - self.z
+
 			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x , self.current_velocity.linear.y, \
 			self.current_velocity.angular.z )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps          
