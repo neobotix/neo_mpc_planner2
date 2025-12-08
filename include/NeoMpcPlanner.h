@@ -152,6 +152,9 @@ private:
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
   carrot_pub_;
 
+  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PointStamped>>
+  carrot_pub2_;
+
   std::unique_ptr<geometry_msgs::msg::PointStamped> createCarrotMsg(
     const geometry_msgs::msg::PoseStamped & carrot_pose);
 

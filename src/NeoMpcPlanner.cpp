@@ -233,15 +233,15 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
     slow_down_ = false;
   }
 
-  double delta_x = carrot_pose2.pose.position.x - carrot_pose.pose.position.x;
-  double delta_y = carrot_pose2.pose.position.y - carrot_pose.pose.position.y;
-  double target_yaw = std::atan2(delta_y, delta_x); // The desired orientation
+  double target_yaw = std::atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x); // The desired orientation
+  double target_yaw_l1 = std::atan2(carrot_pose2.pose.position.y, carrot_pose2.pose.position.x); // Orientation for farther lookahead
 
   if (footprint_cost == 255) {
     throw nav2_core::ControllerException("MPC detected collision!");
   }
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
+  carrot_pub2_->publish(createCarrotMsg(carrot_pose2));
 
   auto request = std::make_shared<neo_srvs2::srv::Optimizer::Request>();
   request->current_vel = speed;
@@ -269,6 +269,7 @@ void NeoMpcPlanner::activate()
 {
   global_path_pub_->on_activate();
   carrot_pub_->on_activate();
+  carrot_pub2_->on_activate();
   auto node = node_.lock();
   dyn_params_handler_ = node->add_on_set_parameters_callback(
     std::bind(&NeoMpcPlanner::dynamicParametersCallback, this, std::placeholders::_1));
@@ -336,6 +337,7 @@ void NeoMpcPlanner::configure(
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
   }
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
+  carrot_pub2_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point2", 1);
   collision_checker_ = std::make_unique<nav2_costmap_2d::
       FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>(costmap_);
 }
