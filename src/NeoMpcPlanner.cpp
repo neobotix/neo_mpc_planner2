@@ -236,6 +236,25 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   double target_yaw = std::atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x); // The desired orientation
   double target_yaw_l1 = std::atan2(carrot_pose2.pose.position.y, carrot_pose2.pose.position.x); // Orientation for farther lookahead
 
+  // Calculate effective turn angle for Python to use
+  // Use actual velocity to determine if robot is driving backward
+  bool driving_backward = (speed.linear.x < -0.05);  // Threshold to avoid noise
+  
+  double effective_turn_angle;
+  if (driving_backward) {
+    // If driving backward, check turn angle relative to backward direction (±180°)
+    double backward_angle = std::abs(target_yaw) - M_PI;
+    effective_turn_angle = std::abs(backward_angle);
+  } else {
+    // If driving forward, use target_yaw directly
+    effective_turn_angle = std::abs(target_yaw);
+  }
+  
+  // Always calculate tight lookahead point for Python to choose from
+  const double TIGHT_LOOKAHEAD = 0.1;
+  auto carrot_pose_tight = getLookAheadPoint(TIGHT_LOOKAHEAD, transformed_plan);
+  double target_yaw_tight = std::atan2(carrot_pose_tight.pose.position.y, carrot_pose_tight.pose.position.x);
+
   if (footprint_cost == 255) {
     throw nav2_core::ControllerException("MPC detected collision!");
   }
@@ -246,7 +265,10 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   auto request = std::make_shared<neo_srvs2::srv::Optimizer::Request>();
   request->current_vel = speed;
   request->carrot_pose = carrot_pose;
+  request->carrot_pose_tight = carrot_pose_tight;
   request->turn_yaw = target_yaw;
+  request->turn_yaw_tight = target_yaw_tight;
+  request->effective_turn_angle = effective_turn_angle;
   request->goal_pose = goal_pose;
   request->current_pose = position;
   request->switch_opt = closer_to_goal;
