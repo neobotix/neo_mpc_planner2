@@ -236,6 +236,11 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   double target_yaw = std::atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x); // The desired orientation
   double target_yaw_l1 = std::atan2(carrot_pose2.pose.position.y, carrot_pose2.pose.position.x); // Orientation for farther lookahead
 
+  if (closer_to_goal) {
+    auto goal_orientation = transformed_plan.poses.back().pose.orientation;
+    target_yaw = createYawFromQuat(goal_orientation);
+  }
+
   // Calculate effective turn angle for Python to use
   // Use actual velocity to determine if robot is driving backward
   bool driving_backward = (speed.linear.x < -0.05);  // Threshold to avoid noise
@@ -251,8 +256,7 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   }
   
   // Always calculate tight lookahead point for Python to choose from
-  const double TIGHT_LOOKAHEAD = 0.1;
-  auto carrot_pose_tight = getLookAheadPoint(TIGHT_LOOKAHEAD, transformed_plan);
+  auto carrot_pose_tight = getLookAheadPoint(tight_lookahead_dist, transformed_plan);
   double target_yaw_tight = std::atan2(carrot_pose_tight.pose.position.y, carrot_pose_tight.pose.position.x);
 
   if (footprint_cost == 255) {
@@ -266,6 +270,7 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   request->current_vel = speed;
   request->carrot_pose = carrot_pose;
   request->carrot_pose_tight = carrot_pose_tight;
+  request->carrot_pose_terminal = carrot_pose2;  // Use far lookahead for terminal cost
   request->turn_yaw = target_yaw;
   request->turn_yaw_tight = target_yaw_tight;
   request->effective_turn_angle = effective_turn_angle;
@@ -344,13 +349,25 @@ void NeoMpcPlanner::configure(
     node, plugin_name_ + ".lookahead_dist_max", rclcpp::ParameterValue(0.5));
   declare_parameter_if_not_declared(
     node, plugin_name_ + ".lookahead_dist_close_to_goal", rclcpp::ParameterValue(0.5));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".tight_lookahead_dist", rclcpp::ParameterValue(0.1));
 
   node->get_parameter(plugin_name_ + ".lookahead_dist_min", lookahead_dist_min_);
   node->get_parameter(plugin_name_ + ".lookahead_dist_max", lookahead_dist_max_);
   node->get_parameter(
     plugin_name_ + ".lookahead_dist_close_to_goal",
     lookahead_dist_close_to_goal_);
+  node->get_parameter(plugin_name_ + ".tight_lookahead_dist", tight_lookahead_dist);
   node->get_parameter("controller_frequency", control_frequency);
+  
+  // Validation: lookahead_dist_close_to_goal should be less than tight_lookahead_dist
+  if (lookahead_dist_close_to_goal_ >= tight_lookahead_dist) {
+    RCLCPP_WARN(
+      logger_,
+      "lookahead_dist_close_to_goal (%.2f) should be less than or equal to tight_lookahead_dist (%.2f)",
+      lookahead_dist_close_to_goal_, tight_lookahead_dist);
+    lookahead_dist_close_to_goal_ = tight_lookahead_dist; // Set to default value
+  }
 
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
@@ -397,6 +414,8 @@ NeoMpcPlanner::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramete
         lookahead_dist_max_ = parameter.as_double();
       } else if (name == plugin_name_ + "lookahead_dist_close_to_goal") {
         lookahead_dist_close_to_goal_ = parameter.as_double();
+      } else if (name == plugin_name_ + "tight_lookahead_dist") {
+        tight_lookahead_dist = parameter.as_double();
       } 
     }
     mutex_.unlock();

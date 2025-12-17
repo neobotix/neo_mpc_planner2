@@ -128,12 +128,12 @@ class MpcOptimizationServer(Node):
 		self.turn_yaw_tight_ = 0.0
 		self.effective_turn_angle_ = 0.0
 		self.carrot_pose_tight = PoseStamped()
+		self.carrot_pose_terminal = PoseStamped()
 		self.last_control = [0,0,0]
 		self.costmap_ros = Costmap2d(self)
 
 		self.update_x = 0.0
 		self.update_y = 0.0
-		self.update_yaw = 0.0
 		self.size_x_ = 0
 		self.turn_yaw_ = 0.0
 
@@ -233,6 +233,7 @@ class MpcOptimizationServer(Node):
 		_, _, target_yaw = self.euler_from_quaternion(self.carrot_pose.pose.orientation.x, self.carrot_pose.pose.orientation.y, self.carrot_pose.pose.orientation.z, self.carrot_pose.pose.orientation.w)
 		_, _, final_yaw = self.euler_from_quaternion(self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w)
 		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.goal_pose.orientation.w)
+		_, _, terminal_yaw = self.euler_from_quaternion(self.carrot_pose_terminal.pose.orientation.x, self.carrot_pose_terminal.pose.orientation.y, self.carrot_pose_terminal.pose.orientation.z, self.carrot_pose_terminal.pose.orientation.w)
 
 		pos_x = self.current_pose.pose.position.x
 		pos_y = self.current_pose.pose.position.y
@@ -266,7 +267,7 @@ class MpcOptimizationServer(Node):
 			use_tight_lookahead = (dist_to_obs < self.tight_lookahead_dist_threshold and 
 			                       self.effective_turn_angle_ > self.sharp_turn_threshold)
 			
-			if use_tight_lookahead:
+			if use_tight_lookahead and not self.update_opt_param:
 				# Use tight lookahead for precise control near obstacles during turns
 				step_target_yaw = self.turn_yaw_tight_
 				curr_pos = np.array((self.carrot_pose_tight.pose.position.x, self.carrot_pose_tight.pose.position.y))
@@ -279,18 +280,18 @@ class MpcOptimizationServer(Node):
 			step_dist_error =  np.linalg.norm(curr_pos - np.array((self.x, self.y)))
 
 			# Adaptive Orientation Control
-			# Only use bidirectional alignment if:
-			# 1. Close to obstacles AND
-			# 2. Far enough from goal to avoid oscillations
-			if dist_to_obs < self.tight_lookahead_dist_threshold and step_dist_error > 0.2:
+			if dist_to_obs < self.tight_lookahead_dist_threshold and not self.update_opt_param:
 				# Narrow space: Bidirectional Alignment
 				# Both self.turn_yaw_ and self.z are in local frame (relative to base_link)
-				# step_target_yaw is the angle to goal (0 = straight ahead)
+				# self.turn_yaw_ is the angle to goal (0 = straight ahead)
 				
 				# Calculate both alignment options
 				forward_target = step_target_yaw
-				# For backward, add pi to flip 180 degrees
-				backward_target = step_target_yaw + np.pi
+				# For backward, add/subtract pi to flip 180 degrees
+				if step_target_yaw >= 0:
+					backward_target = step_target_yaw - np.pi
+				else:
+					backward_target = step_target_yaw + np.pi
 				
 				# Calculate angular distance from current orientation (self.z) to each target
 				# Use ROS angles library for proper angle wrapping
@@ -300,17 +301,14 @@ class MpcOptimizationServer(Node):
 				# Choose the alignment that requires less rotation
 				if diff_to_backward < diff_to_forward:
 					# Backward alignment is closer
-					print("Backward alignment is closer")
 					step_target_yaw = backward_target
 				else:
 					# Forward alignment is closer
-					print("Forward alignment is closer")
 					step_target_yaw = forward_target
-
+				
 			# Calculate angular error (handling wrapping)
-			# Use shortest_angular_distance to ensure we always take the shortest rotation
 			step_orient_error = shortest_angular_distance(self.z, step_target_yaw)
-			print("step_orient_error: ", step_orient_error)
+			# step_orient_error = np.arctan2(np.sin(diff), np.cos(diff))
 
 			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x , self.current_velocity.linear.y, \
@@ -323,16 +321,20 @@ class MpcOptimizationServer(Node):
 				update_footprint.polygon.points[j].x += (cmd_vel[0+3*i]*np.cos(self.z)* self.dt - cmd_vel[1+3*i]*np.sin(self.z)* self.dt) 
 				update_footprint.polygon.points[j].y += (cmd_vel[0+3*i]*np.sin(self.z)* self.dt + cmd_vel[1+3*i]*np.cos(self.z)* self.dt)
 
-			mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
-			self.footprint_cost = self.costmap_ros.getFootprintCost(update_footprint.polygon)
+			# mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
+			# self.footprint_cost = self.costmap_ros.getFootprintCost(update_footprint.polygon)
 
 			# Footprint collision cost
 			# self.cost_total += self.footprint_cost
 
 		# iii) terminal cost
-		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
-		# step_orient_error = final_yaw - self.z
-		self.cost_total += ((self.w_trans * step_dist_error**2)) * self.w_terminal
+		# Use carrot_pose_terminal (far lookahead) for terminal cost to avoid redundancy
+		# carrot_pose is already being tracked in step-by-step costs
+		terminal_goal_pos = np.array((self.carrot_pose_terminal.pose.position.x, self.carrot_pose_terminal.pose.position.y))
+		step_dist_error =  np.linalg.norm(terminal_goal_pos - np.array((self.x, self.y)))
+		step_orient_error = shortest_angular_distance(self.z, terminal_yaw)
+		
+		self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) * self.w_terminal
 		
 		return self.cost_total
 
@@ -454,6 +456,7 @@ class MpcOptimizationServer(Node):
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
 		self.carrot_pose_tight = request.carrot_pose_tight
+		self.carrot_pose_terminal = request.carrot_pose_terminal
 		self.current_velocity = request.current_vel
 		self.goal_pose = request.goal_pose
 		self.update_opt_param = request.switch_opt
