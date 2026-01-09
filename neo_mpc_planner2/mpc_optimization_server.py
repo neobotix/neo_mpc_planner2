@@ -151,9 +151,14 @@ class MpcOptimizationServer(Node):
 			self.bnds.append(b_x_vel)
 			self.bnds.append(b_y_vel)
 			self.bnds.append(b_rot)
+			
 			# Velocity magnitude constraint
 			self.cons.append({'type': 'ineq', 'fun': partial(self.f_constraint, index = i)})
-			# CBF is now a soft constraint (penalty in objective function)
+			
+			# Acceleration constraints for smooth motion
+			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_x_constraint, index = i)})
+			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_y_constraint, index = i)})
+			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_theta_constraint, index = i)})
 			
 		self.initial_guess = np.zeros(self.no_ctrl_steps * 3)
 		self.dt  = self.prediction_horizon /self.no_ctrl_steps
@@ -178,6 +183,40 @@ class MpcOptimizationServer(Node):
 
 	def f_constraint(self, initial, index):
 		return  self.max_vel_trans - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
+
+	# Acceleration constraint functions
+	def acc_x_constraint(self, cmd_vel, index):
+		"""Ensure vx doesn't exceed acceleration limits"""
+		if index == 0:
+			# First step: compare to last control
+			delta_v = cmd_vel[0] - self.last_control[0]
+		else:
+			# Subsequent steps: compare to previous step
+			delta_v = cmd_vel[0 + index * 3] - cmd_vel[0 + (index-1) * 3]
+		
+		max_delta = self.acc_x_limit * self.dt
+		# Return positive value when constraint is satisfied
+		return max_delta - abs(delta_v)
+	
+	def acc_y_constraint(self, cmd_vel, index):
+		"""Ensure vy doesn't exceed acceleration limits"""
+		if index == 0:
+			delta_v = cmd_vel[1] - self.last_control[1]
+		else:
+			delta_v = cmd_vel[1 + index * 3] - cmd_vel[1 + (index-1) * 3]
+		
+		max_delta = self.acc_y_limit * self.dt
+		return max_delta - abs(delta_v)
+	
+	def acc_theta_constraint(self, cmd_vel, index):
+		"""Ensure angular velocity doesn't exceed acceleration limits"""
+		if index == 0:
+			delta_v = cmd_vel[2] - self.last_control[2]
+		else:
+			delta_v = cmd_vel[2 + index * 3] - cmd_vel[2 + (index-1) * 3]
+		
+		max_delta = self.acc_theta_limit * self.dt
+		return max_delta - abs(delta_v)   
 
 	def euler_from_quaternion(self, x, y, z, w):
 		t0 = +2.0 * (w * x + y * z)
