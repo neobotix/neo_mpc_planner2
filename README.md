@@ -52,9 +52,9 @@ controller_server:
 mpc_optimization_server:
   ros__parameters:
     # Acceleration limits
-    acc_x_limit: 2.5
-    acc_y_limit: 2.5
-    acc_theta_limit: 3.0
+    acc_x_limit: 1.5
+    acc_y_limit: 1.5
+    acc_theta_limit: 0.8
     
     # Velocity limits (min)
     min_vel_x: -0.7
@@ -77,8 +77,8 @@ mpc_optimization_server:
     w_costmap: 0.05                    # Costmap traversal weight 
     
     # Adaptive behavior parameters
-    sharp_turn_threshold: 0.52         # Turn angle threshold (radians) for tight lookahead activation (~30 degrees)
-    tight_lookahead_dist_threshold: 1.0  # Distance to obstacles (m) for adaptive orientation control
+    sharp_turn_threshold: 0.8         # Turn angle threshold (radians) for tight lookahead activation (~30 degrees)
+    tight_lookahead_dist_threshold: 0.5  # Distance to obstacles (m) for adaptive orientation control
     
     # Optimizer parameters
     waiting_time: 3.0                  # Waiting time before retry after obstacle collision
