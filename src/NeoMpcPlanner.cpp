@@ -259,6 +259,11 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   auto carrot_pose_tight = getLookAheadPoint(tight_lookahead_dist, transformed_plan);
   double target_yaw_tight = std::atan2(carrot_pose_tight.pose.position.y, carrot_pose_tight.pose.position.x);
 
+  if (closer_to_goal) {
+    auto goal_orientation = transformed_plan.poses.back().pose.orientation;
+    target_yaw_tight = createYawFromQuat(goal_orientation);
+  }
+
   if (footprint_cost == 255) {
     throw nav2_core::ControllerException("MPC detected collision!");
   }
@@ -361,13 +366,13 @@ void NeoMpcPlanner::configure(
   node->get_parameter("controller_frequency", control_frequency);
   
   // Validation: lookahead_dist_close_to_goal should be less than tight_lookahead_dist
-  if (lookahead_dist_close_to_goal_ >= tight_lookahead_dist) {
-    RCLCPP_WARN(
-      logger_,
-      "lookahead_dist_close_to_goal (%.2f) should be less than or equal to tight_lookahead_dist (%.2f)",
-      lookahead_dist_close_to_goal_, tight_lookahead_dist);
-    lookahead_dist_close_to_goal_ = tight_lookahead_dist; // Set to default value
-  }
+  // if (lookahead_dist_close_to_goal_ >= tight_lookahead_dist) {
+  //   RCLCPP_WARN(
+  //     logger_,
+  //     "lookahead_dist_close_to_goal (%.2f) should be less than or equal to tight_lookahead_dist (%.2f)",
+  //     lookahead_dist_close_to_goal_, tight_lookahead_dist);
+  //   lookahead_dist_close_to_goal_ = tight_lookahead_dist; // Set to default value
+  // }
 
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
