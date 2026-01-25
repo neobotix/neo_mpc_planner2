@@ -77,6 +77,7 @@ class MpcOptimizationServer(Node):
 		self.declare_parameter('control_steps', value = 3)
 		self.declare_parameter('sharp_turn_threshold', value = 0.52)
 		self.declare_parameter('tight_lookahead_dist_threshold', value = 0.5)
+		self.declare_parameter('control_time_scale', value = 0.4)  # Scale factor for collision check lookahead
 
 		# Get Parameters
 		self.acc_x_limit = self.get_parameter('acc_x_limit').value
@@ -107,6 +108,7 @@ class MpcOptimizationServer(Node):
 		self.waiting_time = self.get_parameter('waiting_time').value
 		self.sharp_turn_threshold = self.get_parameter('sharp_turn_threshold').value
 		self.tight_lookahead_dist_threshold = self.get_parameter('tight_lookahead_dist_threshold').value
+		self.control_time_scale = self.get_parameter('control_time_scale').value
 
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
 		self.add_on_set_parameters_callback(self.cb_params)
@@ -378,40 +380,44 @@ class MpcOptimizationServer(Node):
 		return self.cost_total
 
 	# NEW: Function to publish debug footprints
-	def publishDebugFootprints(self):
+	def publishDebugFootprints(self, cmd_vel):
 		"""
 		Publishes the stored footprints as a Path for visualization in RViz.
 		Each footprint corner becomes a pose in the path.
 		"""
-		if not self.debug_footprints:
-			return
+		debug_footprints = []
+		# add the next predicted footprint to the debug footprints
+		# use cmd_vel to calculate the updates to the footprint
+		update_footprint = copy.deepcopy(self.footprint)
+		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
+		next_odom_yaw = odom_yaw + cmd_vel[2] * self.control_time_scale * self.dt
+		for j in range(len(update_footprint.polygon.points)):
+			update_footprint.polygon.points[j].x += (cmd_vel[0]*np.cos(next_odom_yaw)* self.control_time_scale * self.dt - cmd_vel[1]*np.sin(next_odom_yaw)* self.control_time_scale * self.dt) 
+			update_footprint.polygon.points[j].y += (cmd_vel[0]*np.sin(next_odom_yaw)* self.control_time_scale * self.dt + cmd_vel[1]*np.cos(next_odom_yaw)* self.control_time_scale * self.dt)
+		debug_footprints.append(copy.deepcopy(update_footprint))		
 		
 		debug_path = Path()
 		debug_path.header.stamp = self.get_clock().now().to_msg()
 		debug_path.header.frame_id = "map"
 		
-		for i, (footprint, cost, pose_info) in enumerate(zip(self.debug_footprints, self.debug_costs, self.debug_poses)):
-			# Add each corner of the footprint as a pose
-			for j, point in enumerate(footprint.polygon.points):
-				pose = PoseStamped()
-				pose.header.stamp = self.get_clock().now().to_msg()
-				pose.header.frame_id = "map"
-				pose.pose.position.x = point.x
-				pose.pose.position.y = point.y
-				pose.pose.position.z = 0.1 * i  # Stack vertically for visualization
-				
-				# Use orientation to encode step number (for color coding in RViz)
-				q = self.quaternion_from_euler(0, 0, pose_info['odom_yaw'])
-				pose.pose.orientation.w = q[0]
-				pose.pose.orientation.x = q[1]
-				pose.pose.orientation.y = q[2]
-				pose.pose.orientation.z = q[3]
-				
-				debug_path.poses.append(pose)
+		# Add each corner of the footprint as a pose
+		for j, point in enumerate(update_footprint.polygon.points):
+			pose = PoseStamped()
+			pose.header.stamp = self.get_clock().now().to_msg()
+			pose.header.frame_id = "map"
+			pose.pose.position.x = point.x
+			pose.pose.position.y = point.y
+			pose.pose.position.z = 0.1  # Stack vertically for visualization
+			
+			# Use orientation to encode step number (for color coding in RViz)
+			q = self.quaternion_from_euler(0, 0, self.z)
+			pose.pose.orientation.w = q[0]
+			pose.pose.orientation.x = q[1]
+			pose.pose.orientation.y = q[2]
+			pose.pose.orientation.z = q[3]
+			debug_path.poses.append(pose)
 		
 		self.PubFootprintArray.publish(debug_path)
-		
-		self.Pubfootprint.publish(footprint)
 
 	def publishLocalPlan(self, x):
 		self.local_plan.poses.clear()
@@ -456,36 +462,47 @@ class MpcOptimizationServer(Node):
 
 	def collision_check(self, x):
 		# Collision check with footprint
-		footprint = self.footprint
 		pos_x = self.current_pose.pose.position.x
 		pos_y = self.current_pose.pose.position.y
 		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
 
-		pose = PoseStamped()
-		pose.pose.position.x = pos_x
-		pose.pose.position.y = pos_y
+		# Calculate collision check lookahead time
+		# Scale dt to check at an intermediate point between control_interval and dt
+		# With scale=0.4 and dt=0.267s, this checks at ~0.11s (about 3 control cycles ahead)
+		collision_time = self.dt * self.control_time_scale
+		next_odom_yaw = odom_yaw + x[2] * collision_time
+		next_pos_x = pos_x + x[0]*np.cos(next_odom_yaw) * collision_time - x[1]*np.sin(next_odom_yaw) * collision_time
+		next_pos_y = pos_y + x[0]*np.sin(next_odom_yaw) * collision_time + x[1]*np.cos(next_odom_yaw) * collision_time
 
-		for i in range((self.no_ctrl_steps)):
-			pose = PoseStamped()
-			odom_yaw += x[2+3*i] * self.dt
-			pos_x += x[3*i]*np.cos(odom_yaw) * self.dt - x[1+3*i]*np.sin(odom_yaw) * self.dt
-			pos_y += x[3*i]*np.sin(odom_yaw) * self.dt + x[1+3*i]*np.cos(odom_yaw) * self.dt   
-			pose.pose.position.x = pos_x
-			pose.pose.position.y = pos_y
-			pose.header.stamp = self.get_clock().now().to_msg()
-			q = self.quaternion_from_euler(0, 0, odom_yaw)
-			mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
-			col = self.costmap_ros.getCost(mx1, my1)
-			pose.pose.orientation.w = q[0]
-			pose.pose.orientation.x = q[1]
-			pose.pose.orientation.y = q[2]
-			pose.pose.orientation.z = q[3]
-			if (col >= 0.99):
-				self.collision = True
-				print("Collision ahead, stopping the robot")
-				break
+		# Check point collision at next predicted position
+		mx1, my1 = self.costmap_ros.getWorldToMap(next_pos_x, next_pos_y)
+		col = self.costmap_ros.getCost(mx1, my1)
+		if (col >= 0.99):
+			self.collision = True
+			print("Collision ahead, stopping the robot")
+		else:
+			self.collision = False
 
-		if (self.costmap_ros.getFootprintCost(footprint) == 1.0):
+		# Check footprint collision at NEXT predicted pose (not final)
+		# Transform footprint to the next predicted position
+		update_footprint = PolygonStamped()
+		update_footprint.header = self.footprint.header
+		update_footprint.polygon.points = [
+			Point32(x=p.x, y=p.y, z=p.z) for p in self.footprint.polygon.points
+		]
+		
+		for j in range(len(update_footprint.polygon.points)):
+			# Transform footprint polygon to next predicted pose
+			update_footprint.polygon.points[j].x = next_pos_x + (
+				self.footprint.polygon.points[j].x * np.cos(next_odom_yaw) - 
+				self.footprint.polygon.points[j].y * np.sin(next_odom_yaw)
+			)
+			update_footprint.polygon.points[j].y = next_pos_y + (
+				self.footprint.polygon.points[j].x * np.sin(next_odom_yaw) + 
+				self.footprint.polygon.points[j].y * np.cos(next_odom_yaw)
+			)
+		
+		if (self.costmap_ros.getFootprintCost(update_footprint.polygon) == 1.0):
 			self.collision_footprint = True
 			print("Footprint in collision, stopping the robot")
 		else:
@@ -514,7 +531,10 @@ class MpcOptimizationServer(Node):
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':self.opt_tolerance,'disp':False})		
 		
 		# NEW: Publish debug footprints after optimization
-		self.publishDebugFootprints()
+		self.publishDebugFootprints(x.x)
+
+		# Check collision
+		# self.collision_check(x.x)
 		
 		self.publishLocalPlan(x.x)
 		for i in range(0,3):
