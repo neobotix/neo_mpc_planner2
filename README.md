@@ -45,15 +45,14 @@ controller_server:
       plugin: "neo_mpc_planner::NeoMpcPlanner"
       lookahead_dist_min: 0.4          # Minimum lookahead distance
       lookahead_dist_max: 0.4          # Maximum lookahead distance  
-      lookahead_dist_close_to_goal: 0.4  # Lookahead when close to goal (should be < tight_lookahead_dist)
       tight_lookahead_dist: 0.1        # Reduced lookahead for sharp turns near obstacles
       control_steps: 3
 
 mpc_optimization_server:
   ros__parameters:
     # Acceleration limits
-    acc_x_limit: 1.5
-    acc_y_limit: 1.5
+    acc_x_limit: 0.8
+    acc_y_limit: 0.8
     acc_theta_limit: 0.8
     
     # Velocity limits (min)
@@ -70,15 +69,16 @@ mpc_optimization_server:
     
     # Cost function weights
     w_trans: 0.82                      # Translation error weight 
-    w_orient: 0.50                     # Orientation error weight 
+    w_orient: 0.5                      # Orientation error weight 
     w_control: 0.05                    # Control effort weight 
     w_terminal: 0.05                   # Terminal cost weight 
     w_footprint: 0                     # Footprint collision weight (currently disabled)
     w_costmap: 0.05                    # Costmap traversal weight 
     
     # Adaptive behavior parameters
-    sharp_turn_threshold: 0.8         # Turn angle threshold (radians) for tight lookahead activation (~30 degrees)
+    sharp_turn_threshold: 0.3          # Turn angle threshold (radians) for tight lookahead activation
     tight_lookahead_dist_threshold: 0.5  # Distance to obstacles (m) for adaptive orientation control
+    control_time_scale: 0.2           # Temporal scale factor (0.0-1.0, fraction of dt to match cmd_vel timing)
     
     # Optimizer parameters
     waiting_time: 3.0                  # Waiting time before retry after obstacle collision
