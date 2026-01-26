@@ -483,24 +483,15 @@ class MpcOptimizationServer(Node):
 		else:
 			self.collision = False
 
-		# Check footprint collision at NEXT predicted pose (not final)
-		# Transform footprint to the next predicted position
-		update_footprint = PolygonStamped()
-		update_footprint.header = self.footprint.header
-		update_footprint.polygon.points = [
-			Point32(x=p.x, y=p.y, z=p.z) for p in self.footprint.polygon.points
-		]
-		
+		# Check footprint collision at next predicted pose
+		# Footprint is already in map frame, offset by predicted displacement
+		update_footprint = copy.deepcopy(self.footprint)
+		# Calculate displacement in world frame
+		delta_x = x[0]*np.cos(odom_yaw) * collision_time - x[1]*np.sin(odom_yaw) * collision_time
+		delta_y = x[0]*np.sin(odom_yaw) * collision_time + x[1]*np.cos(odom_yaw) * collision_time
 		for j in range(len(update_footprint.polygon.points)):
-			# Transform footprint polygon to next predicted pose
-			update_footprint.polygon.points[j].x = next_pos_x + (
-				self.footprint.polygon.points[j].x * np.cos(next_odom_yaw) - 
-				self.footprint.polygon.points[j].y * np.sin(next_odom_yaw)
-			)
-			update_footprint.polygon.points[j].y = next_pos_y + (
-				self.footprint.polygon.points[j].x * np.sin(next_odom_yaw) + 
-				self.footprint.polygon.points[j].y * np.cos(next_odom_yaw)
-			)
+			update_footprint.polygon.points[j].x += delta_x
+			update_footprint.polygon.points[j].y += delta_y
 		
 		if (self.costmap_ros.getFootprintCost(update_footprint.polygon) == 1.0):
 			self.collision_footprint = True
