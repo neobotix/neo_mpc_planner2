@@ -40,12 +40,15 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.parameter import Parameter
+from geometry_msgs.msg import Point32
+import copy
+from angles import shortest_angular_distance
 
 class MpcOptimizationServer(Node):
 	def __init__(self):
 		super().__init__('mpc_optimization_server')
 
-		# declare parameters
+		# [Keep all existing parameter declarations]
 		self.declare_parameter('acc_x_limit', value = 0.5)
 		self.declare_parameter('acc_y_limit', value = 0.5)
 		self.declare_parameter('acc_theta_limit', value = 0.5)
@@ -71,8 +74,10 @@ class MpcOptimizationServer(Node):
 		self.declare_parameter('low_pass_gain', value = 0.5)
 		self.declare_parameter('opt_tolerance', value = 1e-5)
 		self.declare_parameter('prediction_horizon', value = 0.5)
-		# self.declare_parameter('control_horizon', value = 0.5)
 		self.declare_parameter('control_steps', value = 3)
+		self.declare_parameter('sharp_turn_threshold', value = 0.52)
+		self.declare_parameter('tight_lookahead_dist_threshold', value = 0.5)
+		self.declare_parameter('control_time_scale', value = 0.4)  # Scale factor for collision check lookahead
 
 		# Get Parameters
 		self.acc_x_limit = self.get_parameter('acc_x_limit').value
@@ -101,11 +106,18 @@ class MpcOptimizationServer(Node):
 		self.prediction_horizon= self.get_parameter('prediction_horizon').value
 		self.no_ctrl_steps = self.get_parameter('control_steps').value
 		self.waiting_time = self.get_parameter('waiting_time').value
+		self.sharp_turn_threshold = self.get_parameter('sharp_turn_threshold').value
+		self.tight_lookahead_dist_threshold = self.get_parameter('tight_lookahead_dist_threshold').value
+		self.control_time_scale = self.get_parameter('control_time_scale').value
 
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
 		self.add_on_set_parameters_callback(self.cb_params)
 		self.PubRaysPath = self.create_publisher(Path, 'local_plan', 10)
 		self.Pubfootprint = self.create_publisher(PolygonStamped, 'predicted_footprint', 10)
+		
+		# NEW: Publisher for footprint array visualization
+		self.PubFootprintArray = self.create_publisher(Path, 'predicted_footprints_debug', 10)
+		
 		self.current_pose = Pose()
 		self.carrot_pose = PoseStamped()
 		self.goal_pose = PoseStamped()
@@ -114,13 +126,23 @@ class MpcOptimizationServer(Node):
 
 		self.cost_total = 0.0
 		self.costmap_cost = 0.0
+		self.turn_yaw_ = 0.0
+		self.turn_yaw_tight_ = 0.0
+		self.effective_turn_angle_ = 0.0
+		self.carrot_pose_tight = PoseStamped()
+		self.carrot_pose_terminal = PoseStamped()
 		self.last_control = [0,0,0]
 		self.costmap_ros = Costmap2d(self)
 
 		self.update_x = 0.0
 		self.update_y = 0.0
-		self.update_yaw = 0.0
 		self.size_x_ = 0
+		self.turn_yaw_ = 0.0
+
+		# NEW: Storage for debug footprints
+		self.debug_footprints = []
+		self.debug_costs = []
+		self.debug_poses = []
 
 		self.bnds  = list()
 		self.cons = []
@@ -131,39 +153,74 @@ class MpcOptimizationServer(Node):
 			self.bnds.append(b_x_vel)
 			self.bnds.append(b_y_vel)
 			self.bnds.append(b_rot)
+			
+			# Velocity magnitude constraint
 			self.cons.append({'type': 'ineq', 'fun': partial(self.f_constraint, index = i)})
 			
+			# Acceleration constraints for smooth motion
+			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_x_constraint, index = i)})
+			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_y_constraint, index = i)})
+			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_theta_constraint, index = i)})
+			
 		self.initial_guess = np.zeros(self.no_ctrl_steps * 3)
-		self.dt  = self.prediction_horizon /self.no_ctrl_steps #time_interval_between_control_pts used in integration
+		self.dt  = self.prediction_horizon /self.no_ctrl_steps
 		self.last_time = 0.0
 		self.update_opt_param = False
 		self.subscription_footprint = self.create_subscription(
-            PolygonStamped,
-            '/local_costmap/published_footprint',
-            self.footprint_callback,
-            10)
-		self.subscription_footprint  # prevent unused variable warning.
+			PolygonStamped,
+			'/local_costmap/published_footprint',
+			self.footprint_callback,
+			10)
+		self.subscription_footprint
 		self.old_goal = PoseStamped()
 		self.no_acceleration_limit = False
 		self.collision = False
 		self.collision_footprint = False
 		self.tf_buffer = Buffer()
 		self.tf_listener = TransformListener(self.tf_buffer, self)
-		self.control_interval = 0.0;
+		self.control_interval = 0.0
 
 	def footprint_callback(self, msg):
-		self.footprint = msg.polygon
+		self.footprint = msg
 
 	def f_constraint(self, initial, index):
 		return  self.max_vel_trans - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
 
+	# Acceleration constraint functions
+	def acc_x_constraint(self, cmd_vel, index):
+		"""Ensure vx doesn't exceed acceleration limits"""
+		if index == 0:
+			# First step: compare to last control
+			delta_v = cmd_vel[0] - self.last_control[0]
+		else:
+			# Subsequent steps: compare to previous step
+			delta_v = cmd_vel[0 + index * 3] - cmd_vel[0 + (index-1) * 3]
+		
+		max_delta = self.acc_x_limit * self.dt
+		# Return positive value when constraint is satisfied
+		return max_delta - abs(delta_v)
+	
+	def acc_y_constraint(self, cmd_vel, index):
+		"""Ensure vy doesn't exceed acceleration limits"""
+		if index == 0:
+			delta_v = cmd_vel[1] - self.last_control[1]
+		else:
+			delta_v = cmd_vel[1 + index * 3] - cmd_vel[1 + (index-1) * 3]
+		
+		max_delta = self.acc_y_limit * self.dt
+		return max_delta - abs(delta_v)
+	
+	def acc_theta_constraint(self, cmd_vel, index):
+		"""Ensure angular velocity doesn't exceed acceleration limits"""
+		if index == 0:
+			delta_v = cmd_vel[2] - self.last_control[2]
+		else:
+			delta_v = cmd_vel[2 + index * 3] - cmd_vel[2 + (index-1) * 3]
+		
+		max_delta = self.acc_theta_limit * self.dt
+		return max_delta - abs(delta_v)   
+
 	def euler_from_quaternion(self, x, y, z, w):
-		"""
-		Convert a quaternion into euler angles (roll, pitch, yaw)
-		roll is rotation around x in radians (counterclockwise)
-		pitch is rotation around y in radians (counterclockwise)
-		yaw is rotation around z in radians (counterclockwise)
-		"""
 		t0 = +2.0 * (w * x + y * z)
 		t1 = +1.0 - 2.0 * (x * x + y * y)
 		roll_x = math.atan2(t0, t1)
@@ -177,7 +234,7 @@ class MpcOptimizationServer(Node):
 		t4 = +1.0 - 2.0 * (y * y + z * z)
 		yaw_z = math.atan2(t3, t4)
 
-		return roll_x, pitch_y, yaw_z # in radians
+		return roll_x, pitch_y, yaw_z
 
 	def quaternion_from_euler(self, roll, pitch, yaw):
 		cy = math.cos(yaw * 0.5)
@@ -201,30 +258,34 @@ class MpcOptimizationServer(Node):
 		init_guess[0+3*(self.no_ctrl_steps-1):3+3*(self.no_ctrl_steps-1)] = guess[0:3]
 		return init_guess
 
-	def objective(self, cmd_vel):
 
-		self.cost_total= 0
+	# objective function: Distance calculation should be all done in the local frame of the robot
+	def objective(self, cmd_vel):
+		self.cost_total = 0
 		self.x = 0.0
 		self.y = 0.0
 		self.z = 0.0
 
+		# NEW: Clear debug storage at start of each optimization
+		self.debug_footprints = []
+		self.debug_costs = []
+		self.debug_poses = []
+
 		_, _, target_yaw = self.euler_from_quaternion(self.carrot_pose.pose.orientation.x, self.carrot_pose.pose.orientation.y, self.carrot_pose.pose.orientation.z, self.carrot_pose.pose.orientation.w)
 		_, _, final_yaw = self.euler_from_quaternion(self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w)
 		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.goal_pose.orientation.w)
+		_, _, terminal_yaw = self.euler_from_quaternion(self.carrot_pose_terminal.pose.orientation.x, self.carrot_pose_terminal.pose.orientation.y, self.carrot_pose_terminal.pose.orientation.z, self.carrot_pose_terminal.pose.orientation.w)
 
-		count = 1.0
-		tot_x = self.current_velocity.linear.x 
-		tot_y = self.current_velocity.linear.y 
-		tot_z = self.current_velocity.angular.z
-		curr_pos = np.array((self.carrot_pose.pose.position.x,self.carrot_pose.pose.position.y))
 		pos_x = self.current_pose.pose.position.x
 		pos_y = self.current_pose.pose.position.y
-		c_c = 0.0
-		
+
+		update_footprint = PolygonStamped()
+		update_footprint.header = self.footprint.header
+		update_footprint.polygon.points = [
+		    Point32(x=p.x, y=p.y, z=p.z) for p in self.footprint.polygon.points
+		]
 		for i in range((self.no_ctrl_steps)):
 			self.costmap_cost = 0
-			update_footprint = Polygon()
-			update_footprint.points = self.footprint.points
 
 			# Update the position for the predicted velocity
 			self.z += cmd_vel[2+3*i] *  self.dt
@@ -235,38 +296,128 @@ class MpcOptimizationServer(Node):
 			pos_x += cmd_vel[0+3*i] *np.cos(odom_yaw) *  self.dt  - cmd_vel[1+3*i] * np.sin(odom_yaw) *  self.dt
 			pos_y += cmd_vel[0+3*i] *np.sin(odom_yaw) *  self.dt  + cmd_vel[1+3*i] * np.cos(odom_yaw) *  self.dt
 			
-			for j in range(0, len(self.footprint.points)):
-				a = self.footprint.points[j].x
-				b = self.footprint.points[j].y
-				update_footprint.points[j].x = self.x + self.footprint.points[j].x * np.cos(self.z)  - self.footprint.points[j].y * np.sin(self.z) 
-				update_footprint.points[j].y = self.y + self.footprint.points[j].x * np.sin(self.z)  + self.footprint.points[j].y * np.cos(self.z) 
-				self.footprint.points[j].x = a
-				self.footprint.points[j].y = b
-
-			mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
-			self.costmap_cost += self.costmap_ros.getCost(mx1, my1) ** 2
-
-			# i) Evaluvating cost for error in displacement and orientation
+			# Check distance to nearest obstacle for adaptive behavior
+			# Use center point for this general context switch
+			mx_curr, my_curr = self.costmap_ros.getWorldToMap(pos_x, pos_y)
+			dist_to_obs = self.costmap_ros.esdf.get_distance_bilinear(mx_curr, my_curr)
+			
+			# Context-aware lookahead selection
+			# Use tight lookahead ONLY when:
+			# 1. Close to obstacles (< threshold) AND
+			# 2. Making a sharp turn (> sharp_turn_threshold)
+			use_tight_lookahead = (dist_to_obs < self.tight_lookahead_dist_threshold and 
+			                       self.effective_turn_angle_ > self.sharp_turn_threshold)
+			
+			if use_tight_lookahead and not self.update_opt_param:
+				# Use tight lookahead for precise control near obstacles during turns
+				step_target_yaw = self.turn_yaw_tight_
+				curr_pos = np.array((self.carrot_pose_tight.pose.position.x, self.carrot_pose_tight.pose.position.y))
+			else:
+				# Use normal lookahead for smoother motion
+				step_target_yaw = self.turn_yaw_
+				curr_pos = np.array((self.carrot_pose.pose.position.x, self.carrot_pose.pose.position.y))
+			
+			# i) Evaluating cost for error in displacement and orientation
 			step_dist_error =  np.linalg.norm(curr_pos - np.array((self.x, self.y)))
-			step_orient_error = target_yaw - self.z
+
+			# Adaptive Orientation Control
+			if dist_to_obs < self.tight_lookahead_dist_threshold and not self.update_opt_param:
+				# Narrow space: Bidirectional Alignment
+				# Both self.turn_yaw_ and self.z are in local frame (relative to base_link)
+				# self.turn_yaw_ is the angle to goal (0 = straight ahead)
+				
+				# Calculate both alignment options
+				forward_target = step_target_yaw
+				# For backward, add/subtract pi to flip 180 degrees
+				if step_target_yaw >= 0:
+					backward_target = step_target_yaw - np.pi
+				else:
+					backward_target = step_target_yaw + np.pi
+				
+				# Calculate angular distance from current orientation (self.z) to each target
+				# Use ROS angles library for proper angle wrapping
+				diff_to_forward = abs(shortest_angular_distance(self.z, forward_target))
+				diff_to_backward = abs(shortest_angular_distance(self.z, backward_target))
+				
+				# Choose the alignment that requires less rotation
+				if diff_to_backward < diff_to_forward:
+					# Backward alignment is closer
+					step_target_yaw = backward_target
+				else:
+					# Forward alignment is closer
+					step_target_yaw = forward_target
+				
+			# Calculate angular error (handling wrapping)
+			step_orient_error = shortest_angular_distance(self.z, step_target_yaw)
+			# step_orient_error = np.arctan2(np.sin(diff), np.cos(diff))
+
 			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x , self.current_velocity.linear.y, \
-			self.current_velocity.angular.z )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps          
-			
-			# ii) Evaluvating obstacle cost
-			if(self.costmap_ros.getCost(mx1, my1) == 1.0):
-				self.cost_total +=  self.costmap_cost * 1000 / self.no_ctrl_steps
-			else:
-				self.cost_total +=  self.w_costmap_scale * self.costmap_cost / self.no_ctrl_steps
-			
-			if(self.costmap_ros.getFootprintCost(update_footprint) == 1.0):
-				self.cost_total += (self.costmap_ros.getFootprintCost(update_footprint)**2) * self.w_footprint_scale / self.no_ctrl_steps
+			self.current_velocity.angular.z )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps
 
-		# iii) terminal self.cost
-		step_dist_error =  np.linalg.norm(curr_pos - np.array((self.goal_pose.position.x,self.goal_pose.position.y)))
-		step_orient_error = final_yaw - self.z
-		self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient* step_orient_error**2)) * self.w_terminal 
+			# Transform footprint to WORLD frame using WORLD coordinates
+			for j in range(0, len(update_footprint.polygon.points)):
+				
+				# Transform to world frame using world position and orientation
+				update_footprint.polygon.points[j].x += (cmd_vel[0+3*i]*np.cos(self.z)* self.dt - cmd_vel[1+3*i]*np.sin(self.z)* self.dt) 
+				update_footprint.polygon.points[j].y += (cmd_vel[0+3*i]*np.sin(self.z)* self.dt + cmd_vel[1+3*i]*np.cos(self.z)* self.dt)
+
+			# mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
+			# self.footprint_cost = self.costmap_ros.getFootprintCost(update_footprint.polygon)
+
+			# Footprint collision cost
+			# self.cost_total += self.footprint_cost
+
+		# iii) terminal cost
+		# Use carrot_pose_terminal (far lookahead) for terminal cost to avoid redundancy
+		# carrot_pose is already being tracked in step-by-step costs
+		terminal_goal_pos = np.array((self.carrot_pose_terminal.pose.position.x, self.carrot_pose_terminal.pose.position.y))
+		step_dist_error =  np.linalg.norm(terminal_goal_pos - np.array((self.x, self.y)))
+		step_orient_error = shortest_angular_distance(self.z, terminal_yaw)
+		
+		self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) * self.w_terminal
+		
 		return self.cost_total
+
+	# NEW: Function to publish debug footprints
+	def publishDebugFootprints(self, cmd_vel):
+		"""
+		Publishes the stored footprints as a Path for visualization in RViz.
+		Each footprint corner becomes a pose in the path.
+		"""
+		debug_footprints = []
+		# add the next predicted footprint to the debug footprints
+		# use cmd_vel to calculate the updates to the footprint
+		update_footprint = copy.deepcopy(self.footprint)
+		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
+		next_odom_yaw = odom_yaw + cmd_vel[2] * self.control_time_scale * self.dt
+		for j in range(len(update_footprint.polygon.points)):
+			update_footprint.polygon.points[j].x += (cmd_vel[0]*np.cos(next_odom_yaw)* self.control_time_scale * self.dt - cmd_vel[1]*np.sin(next_odom_yaw)* self.control_time_scale * self.dt) 
+			update_footprint.polygon.points[j].y += (cmd_vel[0]*np.sin(next_odom_yaw)* self.control_time_scale * self.dt + cmd_vel[1]*np.cos(next_odom_yaw)* self.control_time_scale * self.dt)
+		debug_footprints.append(copy.deepcopy(update_footprint))		
+		
+		debug_path = Path()
+		debug_path.header.stamp = self.get_clock().now().to_msg()
+		debug_path.header.frame_id = "map"
+		
+		# Add each corner of the footprint as a pose
+		for j, point in enumerate(update_footprint.polygon.points):
+			pose = PoseStamped()
+			pose.header.stamp = self.get_clock().now().to_msg()
+			pose.header.frame_id = "map"
+			pose.pose.position.x = point.x
+			pose.pose.position.y = point.y
+			pose.pose.position.z = 0.1  # Stack vertically for visualization
+			
+			# Use orientation to encode step number (for color coding in RViz)
+			q = self.quaternion_from_euler(0, 0, self.z)
+			pose.pose.orientation.w = q[0]
+			pose.pose.orientation.x = q[1]
+			pose.pose.orientation.y = q[2]
+			pose.pose.orientation.z = q[3]
+			debug_path.poses.append(pose)
+		
+		self.PubFootprintArray.publish(debug_path)
 
 	def publishLocalPlan(self, x):
 		self.local_plan.poses.clear()
@@ -311,36 +462,38 @@ class MpcOptimizationServer(Node):
 
 	def collision_check(self, x):
 		# Collision check with footprint
-		footprint = self.footprint
 		pos_x = self.current_pose.pose.position.x
 		pos_y = self.current_pose.pose.position.y
 		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
 
-		pose = PoseStamped()
-		pose.pose.position.x = pos_x
-		pose.pose.position.y = pos_y
+		# Calculate collision check lookahead time
+		# Scale dt to check at an intermediate point between control_interval and dt
+		# With scale=0.4 and dt=0.267s, this checks at ~0.11s (about 3 control cycles ahead)
+		collision_time = self.dt * self.control_time_scale
+		next_odom_yaw = odom_yaw + x[2] * collision_time
+		next_pos_x = pos_x + x[0]*np.cos(next_odom_yaw) * collision_time - x[1]*np.sin(next_odom_yaw) * collision_time
+		next_pos_y = pos_y + x[0]*np.sin(next_odom_yaw) * collision_time + x[1]*np.cos(next_odom_yaw) * collision_time
 
-		for i in range((self.no_ctrl_steps)):
-			pose = PoseStamped()
-			odom_yaw += x[2+3*i] * self.dt
-			pos_x += x[3*i]*np.cos(odom_yaw) * self.dt - x[1+3*i]*np.sin(odom_yaw) * self.dt
-			pos_y += x[3*i]*np.sin(odom_yaw) * self.dt + x[1+3*i]*np.cos(odom_yaw) * self.dt   
-			pose.pose.position.x = pos_x
-			pose.pose.position.y = pos_y
-			pose.header.stamp = self.get_clock().now().to_msg()
-			q = self.quaternion_from_euler(0, 0, odom_yaw)
-			mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
-			col = self.costmap_ros.getCost(mx1, my1)
-			pose.pose.orientation.w = q[0]
-			pose.pose.orientation.x = q[1]
-			pose.pose.orientation.y = q[2]
-			pose.pose.orientation.z = q[3]
-			if (col >= 0.99):
-				self.collision = True
-				print("Collision ahead, stopping the robot")
-				break
+		# Check point collision at next predicted position
+		mx1, my1 = self.costmap_ros.getWorldToMap(next_pos_x, next_pos_y)
+		col = self.costmap_ros.getCost(mx1, my1)
+		if (col >= 0.99):
+			self.collision = True
+			print("Collision ahead, stopping the robot")
+		else:
+			self.collision = False
 
-		if (self.costmap_ros.getFootprintCost(footprint) == 1.0):
+		# Check footprint collision at next predicted pose
+		# Footprint is already in map frame, offset by predicted displacement
+		update_footprint = copy.deepcopy(self.footprint)
+		# Calculate displacement in world frame
+		delta_x = x[0]*np.cos(odom_yaw) * collision_time - x[1]*np.sin(odom_yaw) * collision_time
+		delta_y = x[0]*np.sin(odom_yaw) * collision_time + x[1]*np.cos(odom_yaw) * collision_time
+		for j in range(len(update_footprint.polygon.points)):
+			update_footprint.polygon.points[j].x += delta_x
+			update_footprint.polygon.points[j].y += delta_y
+		
+		if (self.costmap_ros.getFootprintCost(update_footprint.polygon) == 1.0):
 			self.collision_footprint = True
 			print("Footprint in collision, stopping the robot")
 		else:
@@ -349,10 +502,15 @@ class MpcOptimizationServer(Node):
 	def optimizer(self, request, response):
 		self.current_pose = request.current_pose
 		self.carrot_pose = request.carrot_pose
+		self.carrot_pose_tight = request.carrot_pose_tight
+		self.carrot_pose_terminal = request.carrot_pose_terminal
 		self.current_velocity = request.current_vel
 		self.goal_pose = request.goal_pose
 		self.update_opt_param = request.switch_opt
 		self.control_interval = request.control_interval
+		self.turn_yaw_ = request.turn_yaw
+		self.turn_yaw_tight_ = request.turn_yaw_tight
+		self.effective_turn_angle_ = request.effective_turn_angle
 
 		# on new goal reset all the flags and initializers
 		if (self.old_goal != self.goal_pose):
@@ -362,6 +520,13 @@ class MpcOptimizationServer(Node):
 
 		x = minimize(self.objective, self.initial_guess,
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':self.opt_tolerance,'disp':False})		
+		
+		# NEW: Publish debug footprints after optimization
+		self.publishDebugFootprints(x.x)
+
+		# Check collision
+		# self.collision_check(x.x)
+		
 		self.publishLocalPlan(x.x)
 		for i in range(0,3):
 			x.x[i] = x.x[i] * self.low_pass_gain + self.last_control[i] * (1 - self.low_pass_gain)
@@ -369,19 +534,16 @@ class MpcOptimizationServer(Node):
 		current_time = time.time()
 		delta_t = current_time - self.last_time
 		self.last_time = current_time
-		self.collision_check(x.x)
 
 		if (self.collision == True or self.collision_footprint == True):
 			response.output_vel.twist.linear.x = 0.0
 			response.output_vel.twist.linear.y = 0.0
 			response.output_vel.twist.angular.z = 0.0
 			self.waiting_time += delta_t
-			# After waiting for 3 seconds for the obstacle to clear, the robot proceeds further in the next service call.
 			if (self.waiting_time >= 3.0):
 				self.collision = False
 				self.waiting_time = 0.0
 		else:
-			# avoiding sudden jerks and inertia
 			temp_x = np.fmin(x.x[0], self.last_control[0] + self.acc_x_limit * self.control_interval)
 			temp_y = np.fmin(x.x[1], self.last_control[1] + self.acc_y_limit * self.control_interval) 
 			temp_z = np.fmin(x.x[2], self.last_control[2] + self.acc_theta_limit * self.control_interval)

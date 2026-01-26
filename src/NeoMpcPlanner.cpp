@@ -25,7 +25,7 @@ SOFTWARE.
 #include "../include/NeoMpcPlanner.h"
 
 #include <tf2/utils.h>
-#include "nav2_ros_common/node_utils.hpp"
+#include "nav2_util/node_utils.hpp"
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <vector>
@@ -43,7 +43,7 @@ using std::hypot;
 using std::min;
 using std::max;
 using std::abs;
-using nav2::declare_parameter_if_not_declared;
+using nav2_util::declare_parameter_if_not_declared;
 using nav2_util::geometry_utils::euclidean_distance;
 using namespace nav2_costmap_2d;  // NOLINT
 using rcl_interfaces::msg::ParameterType;
@@ -212,6 +212,9 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   // For now just for testing
   auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
 
+  // carrot_pose2 for determining the turn
+  auto carrot_pose2 = getLookAheadPoint(lookahead_dist2, transformed_plan);
+
   // check if the pose orientation and robot orientation greater than 180
   // change the lookahead accordingly
   double footprint_cost = collision_checker_->footprintCostAtPose(
@@ -230,23 +233,60 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
     slow_down_ = false;
   }
 
+  double target_yaw = std::atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x); // The desired orientation
+  double target_yaw_l1 = std::atan2(carrot_pose2.pose.position.y, carrot_pose2.pose.position.x); // Orientation for farther lookahead
+
+  if (closer_to_goal) {
+    auto goal_orientation = transformed_plan.poses.back().pose.orientation;
+    target_yaw = createYawFromQuat(goal_orientation);
+  }
+
+  // Calculate effective turn angle for Python to use
+  // Use actual velocity to determine if robot is driving backward
+  bool driving_backward = (speed.linear.x < -0.05);  // Threshold to avoid noise
+  
+  double effective_turn_angle;
+  if (driving_backward) {
+    // If driving backward, check turn angle relative to backward direction (±180°)
+    double backward_angle = std::abs(target_yaw) - M_PI;
+    effective_turn_angle = std::abs(backward_angle);
+  } else {
+    // If driving forward, use target_yaw directly
+    effective_turn_angle = std::abs(target_yaw);
+  }
+  
+  // Always calculate tight lookahead point for Python to choose from
+  auto carrot_pose_tight = getLookAheadPoint(tight_lookahead_dist, transformed_plan);
+  double target_yaw_tight = std::atan2(carrot_pose_tight.pose.position.y, carrot_pose_tight.pose.position.x);
+
+  if (closer_to_goal) {
+    auto goal_orientation = transformed_plan.poses.back().pose.orientation;
+    target_yaw_tight = createYawFromQuat(goal_orientation);
+  }
+
   if (footprint_cost == 255) {
     throw nav2_core::ControllerException("MPC detected collision!");
   }
 
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
+  carrot_pub2_->publish(createCarrotMsg(carrot_pose2));
 
   auto request = std::make_shared<neo_srvs2::srv::Optimizer::Request>();
   request->current_vel = speed;
   request->carrot_pose = carrot_pose;
+  request->carrot_pose_tight = carrot_pose_tight;
+  request->carrot_pose_terminal = carrot_pose2;  // Use far lookahead for terminal cost
+  request->turn_yaw = target_yaw;
+  request->turn_yaw_tight = target_yaw_tight;
+  request->effective_turn_angle = effective_turn_angle;
   request->goal_pose = goal_pose;
   request->current_pose = position;
   request->switch_opt = closer_to_goal;
   request->control_interval = 1.0 / control_frequency;
 
   // Use nav2::ServiceClient API
-  auto future_result = client->async_call(request);
-  auto out = future_result.get();
+  auto result = client->async_send_request(request);
+  auto out = result.get();
   geometry_msgs::msg::TwistStamped cmd_vel_final;
   cmd_vel_final = out->output_vel;
 
@@ -261,6 +301,7 @@ void NeoMpcPlanner::activate()
 {
   global_path_pub_->on_activate();
   carrot_pub_->on_activate();
+  carrot_pub2_->on_activate();
   auto node = node_.lock();
   dyn_params_handler_ = node->add_on_set_parameters_callback(
     std::bind(&NeoMpcPlanner::dynamicParametersCallback, this, std::placeholders::_1));
@@ -287,7 +328,7 @@ void NeoMpcPlanner::setSpeedLimit(
 }
 
 void NeoMpcPlanner::configure(
-  const nav2::LifecycleNode::WeakPtr & parent,
+  const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
   std::string name, const std::shared_ptr<tf2_ros::Buffer> tf,
   const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
 {
@@ -307,19 +348,31 @@ void NeoMpcPlanner::configure(
   client = node->create_client<neo_srvs2::srv::Optimizer>("optimizer");
   global_path_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
 
-  nav2::declare_parameter_if_not_declared(
+  declare_parameter_if_not_declared(
     node, plugin_name_ + ".lookahead_dist_min", rclcpp::ParameterValue(0.5));
-  nav2::declare_parameter_if_not_declared(
+  declare_parameter_if_not_declared(
     node, plugin_name_ + ".lookahead_dist_max", rclcpp::ParameterValue(0.5));
-  nav2::declare_parameter_if_not_declared(
+  declare_parameter_if_not_declared(
     node, plugin_name_ + ".lookahead_dist_close_to_goal", rclcpp::ParameterValue(0.5));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".tight_lookahead_dist", rclcpp::ParameterValue(0.1));
 
   node->get_parameter(plugin_name_ + ".lookahead_dist_min", lookahead_dist_min_);
   node->get_parameter(plugin_name_ + ".lookahead_dist_max", lookahead_dist_max_);
   node->get_parameter(
     plugin_name_ + ".lookahead_dist_close_to_goal",
     lookahead_dist_close_to_goal_);
+  node->get_parameter(plugin_name_ + ".tight_lookahead_dist", tight_lookahead_dist);
   node->get_parameter("controller_frequency", control_frequency);
+  
+  // Validation: lookahead_dist_close_to_goal should be less than tight_lookahead_dist
+  // if (lookahead_dist_close_to_goal_ >= tight_lookahead_dist) {
+  //   RCLCPP_WARN(
+  //     logger_,
+  //     "lookahead_dist_close_to_goal (%.2f) should be less than or equal to tight_lookahead_dist (%.2f)",
+  //     lookahead_dist_close_to_goal_, tight_lookahead_dist);
+  //   lookahead_dist_close_to_goal_ = tight_lookahead_dist; // Set to default value
+  // }
 
   while (!client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
@@ -328,6 +381,7 @@ void NeoMpcPlanner::configure(
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
   }
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point", 1);
+  carrot_pub2_ = node->create_publisher<geometry_msgs::msg::PointStamped>("/lookahead_point2", 1);
   collision_checker_ = std::make_unique<nav2_costmap_2d::
       FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>(costmap_);
 }
@@ -365,6 +419,8 @@ NeoMpcPlanner::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramete
         lookahead_dist_max_ = parameter.as_double();
       } else if (name == plugin_name_ + "lookahead_dist_close_to_goal") {
         lookahead_dist_close_to_goal_ = parameter.as_double();
+      } else if (name == plugin_name_ + "tight_lookahead_dist") {
+        tight_lookahead_dist = parameter.as_double();
       } 
     }
     mutex_.unlock();

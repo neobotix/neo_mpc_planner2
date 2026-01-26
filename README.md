@@ -24,7 +24,7 @@ neo_srvs2
 
 ## Sample Parameters
 
-```
+```yaml
 controller_server:
   ros__parameters:
     # controller server parameters (see Controller Server for more info)
@@ -43,45 +43,49 @@ controller_server:
       stateful: True
     FollowPath:
       plugin: "neo_mpc_planner::NeoMpcPlanner"
-      lookahead_dist_min: 0.4
-      lookahead_dist_max: 0.4
-      lookahead_dist_close_to_goal: 0.4
+      lookahead_dist_min: 0.4          # Minimum lookahead distance
+      lookahead_dist_max: 0.4          # Maximum lookahead distance  
+      tight_lookahead_dist: 0.1        # Reduced lookahead for sharp turns near obstacles
       control_steps: 3
 
 mpc_optimization_server:
   ros__parameters:
-    acc_x_limit: 2.5
-    acc_y_limit: 2.5
-    acc_theta_limit: 3.0
+    # Acceleration limits
+    acc_x_limit: 0.8
+    acc_y_limit: 0.8
+    acc_theta_limit: 0.8
+    
+    # Velocity limits (min)
     min_vel_x: -0.7
     min_vel_y: -0.7
     min_vel_trans: -0.7
     min_vel_theta: -0.7
+    
+    # Velocity limits (max)
     max_vel_x: 0.7
     max_vel_y: 0.7
     max_vel_trans: 0.7
     max_vel_theta: 0.7
-    # Translation error weight 
-    w_trans: 0.82
-    # Orientation error weight 
-    w_orient: 0.50
-    # Control error weight 
-    w_control: 0.05
-    # Terminal weight 
-    w_terminal: 0.05
-    # Footprint weight 
-    w_footprint: 0
-    # Costmap weight 
-    w_costmap: 0.05
-    # Waiting time before the robot can try a maneuver, after it had been stuck in the obstacle  
-    waiting_time: 3.0
-    low_pass_gain: 0.5
-    # Optimization tolerance, smaller it is, slower the performance
-    opt_tolerance: 1e-3
-    # Time period, upto which MPC has to predict the control commands 
-    prediction_horizon: 0.8
-    # Number of steps that the prediction horizon needs to be splitted into
-    control_steps: 3
+    
+    # Cost function weights
+    w_trans: 0.82                      # Translation error weight 
+    w_orient: 0.5                      # Orientation error weight 
+    w_control: 0.05                    # Control effort weight 
+    w_terminal: 0.05                   # Terminal cost weight 
+    w_footprint: 0                     # Footprint collision weight (currently disabled)
+    w_costmap: 0.05                    # Costmap traversal weight 
+    
+    # Adaptive behavior parameters
+    sharp_turn_threshold: 0.3          # Turn angle threshold (radians) for tight lookahead activation
+    tight_lookahead_dist_threshold: 0.5  # Distance to obstacles (m) for adaptive orientation control
+    control_time_scale: 0.2           # Temporal scale factor (0.0-1.0, fraction of dt to match cmd_vel timing)
+    
+    # Optimizer parameters
+    waiting_time: 3.0                  # Waiting time before retry after obstacle collision
+    low_pass_gain: 0.5                 # Low-pass filter gain for velocity smoothing
+    opt_tolerance: 1e-3                # Optimization tolerance (smaller = slower but more accurate)
+    prediction_horizon: 0.8            # Time horizon for MPC prediction (seconds)
+    control_steps: 3                   # Number of control steps to split prediction horizon
 
 ```
 
