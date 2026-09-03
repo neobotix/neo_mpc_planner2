@@ -78,6 +78,15 @@ class MpcOptimizationServer(Node):
 		self.declare_parameter('sharp_turn_threshold', value = 0.52)
 		self.declare_parameter('tight_lookahead_dist_threshold', value = 0.5)
 		self.declare_parameter('control_time_scale', value = 0.4)  # Scale factor for collision check lookahead
+		self.declare_parameter('costmap_max_age', value = 0.3)
+		self.declare_parameter('use_footprint_constraints', value = True)
+		self.declare_parameter('footprint_circle_offset_x', value = 0.25)
+		self.declare_parameter('footprint_circle_offset_y', value = 0.25)
+		self.declare_parameter('footprint_circle_radius', value = 0.36)
+		self.declare_parameter('footprint_safety_margin', value = 0.05)
+		self.declare_parameter('footprint_constraint_substeps', value = 5)
+		self.declare_parameter('footprint_constraint_tolerance', value = 5e-3)
+		self.declare_parameter('solver_finite_difference_step', value = 1e-3)
 
 		# Get Parameters
 		self.acc_x_limit = self.get_parameter('acc_x_limit').value
@@ -109,6 +118,28 @@ class MpcOptimizationServer(Node):
 		self.sharp_turn_threshold = self.get_parameter('sharp_turn_threshold').value
 		self.tight_lookahead_dist_threshold = self.get_parameter('tight_lookahead_dist_threshold').value
 		self.control_time_scale = self.get_parameter('control_time_scale').value
+		self.costmap_max_age = self.get_parameter('costmap_max_age').value
+		self.use_footprint_constraints = self.get_parameter('use_footprint_constraints').value
+		self.footprint_circle_radius = self.get_parameter('footprint_circle_radius').value
+		self.footprint_safety_margin = self.get_parameter('footprint_safety_margin').value
+		self.footprint_constraint_substeps = self.get_parameter('footprint_constraint_substeps').value
+		self.footprint_constraint_tolerance = self.get_parameter('footprint_constraint_tolerance').value
+		self.solver_finite_difference_step = self.get_parameter('solver_finite_difference_step').value
+
+		circle_offset_x = self.get_parameter('footprint_circle_offset_x').value
+		circle_offset_y = self.get_parameter('footprint_circle_offset_y').value
+		self.footprint_circle_centers = (
+			(circle_offset_x, circle_offset_y),
+			(circle_offset_x, -circle_offset_y),
+			(-circle_offset_x, circle_offset_y),
+			(-circle_offset_x, -circle_offset_y))
+
+		if (self.costmap_max_age <= 0.0 or self.footprint_circle_radius <= 0.0 or
+				self.footprint_safety_margin < 0.0 or
+				self.footprint_constraint_substeps < 1 or
+				self.footprint_constraint_tolerance < 0.0 or
+				self.solver_finite_difference_step <= 0.0):
+			raise ValueError('Invalid costmap or footprint constraint parameters')
 
 		self.srv = self.create_service(Optimizer, 'optimizer', self.optimizer)
 		self.add_on_set_parameters_callback(self.cb_params)
@@ -161,6 +192,11 @@ class MpcOptimizationServer(Node):
 			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_x_constraint, index = i)})
 			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_y_constraint, index = i)})
 			# self.cons.append({'type': 'ineq', 'fun': partial(self.acc_theta_constraint, index = i)})
+
+		if self.use_footprint_constraints:
+			# One vector-valued constraint keeps all four footprint circles outside
+			# lethal/unknown space at every prediction step and intermediate substep.
+			self.cons.append({'type': 'ineq', 'fun': self.footprint_clearance_constraint})
 			
 		self.initial_guess = np.zeros(self.no_ctrl_steps * 3)
 		self.dt  = self.prediction_horizon /self.no_ctrl_steps
@@ -181,12 +217,74 @@ class MpcOptimizationServer(Node):
 		self.control_interval = 0.0
 		self.solver_failure_count = 0
 		self.last_solver_failure_log_time = 0.0
+		self.last_costmap_failure_log_time = 0.0
 
 	def footprint_callback(self, msg):
 		self.footprint = msg
 
 	def f_constraint(self, initial, index):
 		return  self.max_vel_trans - (np.sqrt((initial[0 + index * 3]) * (initial[0 + index * 3]) +(initial[1 + index * 3]) * (initial[1 + index * 3])))   
+
+	def footprint_clearance_constraint(self, cmd_vel):
+		"""Hard ESDF clearance constraints for the four-circle footprint."""
+		constraint_count = (
+			self.no_ctrl_steps * self.footprint_constraint_substeps *
+			len(self.footprint_circle_centers))
+		if self.costmap_ros.collision_esdf.distance_field is None:
+			return np.full(constraint_count, -1.0)
+
+		_, _, initial_world_yaw = self.euler_from_quaternion(
+			self.current_pose.pose.orientation.x,
+			self.current_pose.pose.orientation.y,
+			self.current_pose.pose.orientation.z,
+			self.current_pose.pose.orientation.w)
+		initial_world_x = self.current_pose.pose.position.x
+		initial_world_y = self.current_pose.pose.position.y
+		cos_initial_yaw = np.cos(initial_world_yaw)
+		sin_initial_yaw = np.sin(initial_world_yaw)
+		substep_dt = self.dt / self.footprint_constraint_substeps
+
+		local_x = 0.0
+		local_y = 0.0
+		local_yaw = 0.0
+		constraints = []
+
+		for i in range(self.no_ctrl_steps):
+			vx = cmd_vel[3 * i]
+			vy = cmd_vel[1 + 3 * i]
+			omega = cmd_vel[2 + 3 * i]
+
+			for _ in range(self.footprint_constraint_substeps):
+				local_yaw += omega * substep_dt
+				local_x += (
+					vx * np.cos(local_yaw) - vy * np.sin(local_yaw)) * substep_dt
+				local_y += (
+					vx * np.sin(local_yaw) + vy * np.cos(local_yaw)) * substep_dt
+
+				world_x = (
+					initial_world_x + cos_initial_yaw * local_x -
+					sin_initial_yaw * local_y)
+				world_y = (
+					initial_world_y + sin_initial_yaw * local_x +
+					cos_initial_yaw * local_y)
+				world_yaw = initial_world_yaw + local_yaw
+				cos_world_yaw = np.cos(world_yaw)
+				sin_world_yaw = np.sin(world_yaw)
+
+				for offset_x, offset_y in self.footprint_circle_centers:
+					circle_x = (
+						world_x + cos_world_yaw * offset_x -
+						sin_world_yaw * offset_y)
+					circle_y = (
+						world_y + sin_world_yaw * offset_x +
+						cos_world_yaw * offset_y)
+					clearance = self.costmap_ros.getCollisionDistanceBilinear(
+						circle_x, circle_y)
+					constraints.append(
+						clearance - self.footprint_circle_radius -
+						self.footprint_safety_margin)
+
+		return np.asarray(constraints)
 
 	# Acceleration constraint functions
 	def acc_x_constraint(self, cmd_vel, index):
@@ -501,19 +599,64 @@ class MpcOptimizationServer(Node):
 			self.last_control = [0,0,0]
 			self.waiting_time = 0.0
 
+		costmap_is_current = self.costmap_ros.isCurrent(self.costmap_max_age)
+		costmap_frame_matches = (
+			bool(self.current_pose.header.frame_id) and
+			self.current_pose.header.frame_id == self.costmap_ros.frame_id)
+		if not costmap_is_current or not costmap_frame_matches:
+			now = time.monotonic()
+			if now - self.last_costmap_failure_log_time >= 1.0:
+				self.get_logger().error(
+					'Optimizer stopped for invalid costmap input: '
+					f'age={self.costmap_ros.getAge():.3f}s, '
+					f'max_age={self.costmap_max_age:.3f}s, '
+					f'pose_frame="{self.current_pose.header.frame_id}", '
+					f'costmap_frame="{self.costmap_ros.frame_id}"')
+				self.last_costmap_failure_log_time = now
+
+			response.output_vel.twist.linear.x = 0.0
+			response.output_vel.twist.linear.y = 0.0
+			response.output_vel.twist.angular.z = 0.0
+			self.last_control = [0.0, 0.0, 0.0]
+			self.initial_guess = np.zeros(self.no_ctrl_steps * 3)
+			self.old_goal = self.goal_pose
+			return response
+
 		x = minimize(self.objective, self.initial_guess,
-				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':self.opt_tolerance,'disp':False})		
+				method='SLSQP', bounds=self.bnds, constraints=self.cons,
+				options={
+					'ftol': self.opt_tolerance,
+					'eps': self.solver_finite_difference_step,
+					'disp': False})
 
 		# Never execute a failed or invalid optimizer result. SciPy may still
 		# populate x when SLSQP terminates unsuccessfully, but that candidate is
 		# not guaranteed to satisfy the configured bounds and constraints.
 		expected_solution_size = self.no_ctrl_steps * 3
 		solution = np.asarray(getattr(x, 'x', []), dtype=float)
+		minimum_footprint_constraint = float('nan')
+		footprint_constraint_valid = not self.use_footprint_constraints
+		if (self.use_footprint_constraints and
+				solution.shape == (expected_solution_size,) and
+				np.all(np.isfinite(solution))):
+			footprint_constraints = self.footprint_clearance_constraint(solution)
+			if (footprint_constraints.size > 0 and
+					np.all(np.isfinite(footprint_constraints))):
+				minimum_footprint_constraint = float(np.min(footprint_constraints))
+				footprint_constraint_valid = (
+					minimum_footprint_constraint >=
+					-self.footprint_constraint_tolerance)
+
+		# Costmap freshness is checked immediately before minimize(). Rechecking
+		# it here would reject otherwise valid results merely because the
+		# single-threaded service callback prevents costmap callbacks while SLSQP
+		# is running.
 		solver_result_valid = (
 			x.success and
 			solution.shape == (expected_solution_size,) and
 			np.all(np.isfinite(solution)) and
-			np.isfinite(getattr(x, 'fun', np.nan)))
+			np.isfinite(getattr(x, 'fun', np.nan)) and
+			footprint_constraint_valid)
 
 		if not solver_result_valid:
 			self.solver_failure_count += 1
@@ -523,6 +666,7 @@ class MpcOptimizationServer(Node):
 					'SLSQP result rejected: '
 					f'status={getattr(x, "status", "unknown")}, '
 					f'message={getattr(x, "message", "unknown")}, '
+					f'min_footprint_constraint={minimum_footprint_constraint:.4f}, '
 					f'consecutive_failures={self.solver_failure_count}')
 				self.last_solver_failure_log_time = now
 

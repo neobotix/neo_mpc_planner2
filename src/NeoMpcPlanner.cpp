@@ -33,6 +33,7 @@ SOFTWARE.
 #include "nav2_core/goal_checker.hpp"
 #include "nav2_core/controller_exceptions.hpp"
 #include "nav2_util/geometry_utils.hpp"
+#include "nav2_costmap_2d/cost_values.hpp"
 #include "nav2_costmap_2d/costmap_filters/filter_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include <algorithm>
@@ -156,6 +157,94 @@ bool NeoMpcPlanner::transformPose(
   return false;
 }
 
+bool NeoMpcPlanner::isPoseInCollision(
+  const double x, const double y, const double yaw,
+  const nav2_costmap_2d::Footprint & footprint)
+{
+  unsigned int mx = 0;
+  unsigned int my = 0;
+  if (!costmap_->worldToMap(x, y, mx, my)) {
+    return true;
+  }
+
+  double center_cost = costmap_->getCost(mx, my);
+  if (center_cost >= nav2_costmap_2d::LETHAL_OBSTACLE) {
+    return true;
+  }
+
+  double footprint_cost = collision_checker_->footprintCostAtPose(
+    x, y, yaw, footprint);
+  if (!std::isfinite(footprint_cost) || footprint_cost < 0.0 ||
+    footprint_cost >= nav2_costmap_2d::LETHAL_OBSTACLE)
+  {
+    return true;
+  }
+
+  return false;
+}
+
+bool NeoMpcPlanner::isCollisionImminent(
+  const geometry_msgs::msg::PoseStamped & current_pose,
+  const geometry_msgs::msg::TwistStamped & command,
+  double & collision_time)
+{
+  collision_time = 0.0;
+  const auto footprint = costmap_ros_->getRobotFootprint();
+  if (footprint.empty()) {
+    RCLCPP_ERROR_THROTTLE(
+      logger_, *clock_, 1000,
+      "Predicted footprint collision check has no configured footprint");
+    return true;
+  }
+
+  std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> costmap_lock(
+    *costmap_->getMutex());
+
+  double pose_x = current_pose.pose.position.x;
+  double pose_y = current_pose.pose.position.y;
+  double pose_yaw = tf2::getYaw(current_pose.pose.orientation);
+  if (isPoseInCollision(pose_x, pose_y, pose_yaw, footprint)) {
+    return true;
+  }
+
+  const double vx = command.twist.linear.x;
+  const double vy = command.twist.linear.y;
+  const double omega = command.twist.angular.z;
+
+  double footprint_radius = 0.0;
+  for (const auto & point : footprint) {
+    footprint_radius = max(footprint_radius, hypot(point.x, point.y));
+  }
+
+  double boundary_speed = hypot(vx, vy) + fabs(omega) * footprint_radius;
+  if (boundary_speed <= 1e-6 || collision_prediction_time_ <= 0.0) {
+    return false;
+  }
+
+  double controller_period =
+    control_frequency > 0.0 ? 1.0 / control_frequency : collision_prediction_time_;
+  double spatial_period = costmap_->getResolution() / boundary_speed;
+  double sample_period = std::clamp(
+    min(controller_period, spatial_period), 1e-3, collision_prediction_time_);
+
+  double elapsed = 0.0;
+  while (elapsed < collision_prediction_time_) {
+    double dt = min(sample_period, collision_prediction_time_ - elapsed);
+    double midpoint_yaw = pose_yaw + 0.5 * omega * dt;
+    pose_x += (vx * cos(midpoint_yaw) - vy * sin(midpoint_yaw)) * dt;
+    pose_y += (vx * sin(midpoint_yaw) + vy * cos(midpoint_yaw)) * dt;
+    pose_yaw = angles::normalize_angle(pose_yaw + omega * dt);
+    elapsed += dt;
+
+    if (isPoseInCollision(pose_x, pose_y, pose_yaw, footprint)) {
+      collision_time = elapsed;
+      return true;
+    }
+  }
+
+  return false;
+}
+
 double NeoMpcPlanner::getLookAheadDistance(const geometry_msgs::msg::Twist & speed)
 {
   // If using velocity-scaled look ahead distances, find and clamp the dist
@@ -267,7 +356,9 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
     target_yaw_tight = createYawFromQuat(goal_orientation);
   }
 
-  if (footprint_cost == 255) {
+  if (!std::isfinite(footprint_cost) || footprint_cost < 0.0 ||
+    footprint_cost >= nav2_costmap_2d::LETHAL_OBSTACLE)
+  {
     throw nav2_core::ControllerException("MPC detected collision!");
   }
 
@@ -292,6 +383,19 @@ geometry_msgs::msg::TwistStamped NeoMpcPlanner::computeVelocityCommands(
   auto out = result.get();
   geometry_msgs::msg::TwistStamped cmd_vel_final;
   cmd_vel_final = out->output_vel;
+
+  if (use_predicted_footprint_collision_check_) {
+    double collision_time = 0.0;
+    if (isCollisionImminent(position, cmd_vel_final, collision_time)) {
+      RCLCPP_WARN_THROTTLE(
+        logger_, *clock_, 1000,
+        "Predicted footprint collision in %.3f s; commanding zero velocity",
+        collision_time);
+      cmd_vel_final.twist.linear.x = 0.0;
+      cmd_vel_final.twist.linear.y = 0.0;
+      cmd_vel_final.twist.angular.z = 0.0;
+    }
+  }
 
   return cmd_vel_final;
 }
@@ -359,6 +463,11 @@ void NeoMpcPlanner::configure(
     node, plugin_name_ + ".lookahead_dist_close_to_goal", rclcpp::ParameterValue(0.5));
   declare_parameter_if_not_declared(
     node, plugin_name_ + ".tight_lookahead_dist", rclcpp::ParameterValue(0.1));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".use_predicted_footprint_collision_check",
+    rclcpp::ParameterValue(true));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".collision_prediction_time", rclcpp::ParameterValue(0.3));
 
   node->get_parameter(plugin_name_ + ".lookahead_dist_min", lookahead_dist_min_);
   node->get_parameter(plugin_name_ + ".lookahead_dist_max", lookahead_dist_max_);
@@ -366,7 +475,17 @@ void NeoMpcPlanner::configure(
     plugin_name_ + ".lookahead_dist_close_to_goal",
     lookahead_dist_close_to_goal_);
   node->get_parameter(plugin_name_ + ".tight_lookahead_dist", tight_lookahead_dist);
+  node->get_parameter(
+    plugin_name_ + ".use_predicted_footprint_collision_check",
+    use_predicted_footprint_collision_check_);
+  node->get_parameter(
+    plugin_name_ + ".collision_prediction_time", collision_prediction_time_);
   node->get_parameter("controller_frequency", control_frequency);
+
+  if (collision_prediction_time_ < 0.0) {
+    throw nav2_core::ControllerException(
+            "collision_prediction_time must be greater than or equal to zero");
+  }
   
   // Validation: lookahead_dist_close_to_goal should be less than tight_lookahead_dist
   // if (lookahead_dist_close_to_goal_ >= tight_lookahead_dist) {

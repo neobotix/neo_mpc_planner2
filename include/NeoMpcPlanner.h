@@ -128,9 +128,18 @@ public:
 
 private:
   nav_msgs::msg::Path transformGlobalPlan(const geometry_msgs::msg::PoseStamped & pose);
-  
+
   bool transformPose(const std::string frame, const geometry_msgs::msg::PoseStamped & in_pose,
     geometry_msgs::msg::PoseStamped & out_pose) const;
+
+  bool isPoseInCollision(
+    const double x, const double y, const double yaw,
+    const nav2_costmap_2d::Footprint & footprint);
+
+  bool isCollisionImminent(
+    const geometry_msgs::msg::PoseStamped & current_pose,
+    const geometry_msgs::msg::TwistStamped & command,
+    double & collision_time);
   
   geometry_msgs::msg::PoseStamped getLookAheadPoint(
     const double & lookahead_dist,
@@ -172,6 +181,8 @@ private:
   // should be the boundary of the local costmap. If the costmap is smaller, then the omnidirectional behavior should be adapted
   double lookahead_dist2 = 0.8;
   double control_frequency = 0.0;
+  bool use_predicted_footprint_collision_check_ = true;
+  double collision_prediction_time_ = 0.3;
 
   std::unique_ptr<nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *>>
   collision_checker_;
