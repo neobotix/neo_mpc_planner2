@@ -179,6 +179,8 @@ class MpcOptimizationServer(Node):
 		self.tf_buffer = Buffer()
 		self.tf_listener = TransformListener(self.tf_buffer, self)
 		self.control_interval = 0.0
+		self.solver_failure_count = 0
+		self.last_solver_failure_log_time = 0.0
 
 	def footprint_callback(self, msg):
 		self.footprint = msg
@@ -271,19 +273,14 @@ class MpcOptimizationServer(Node):
 		self.debug_costs = []
 		self.debug_poses = []
 
-		_, _, target_yaw = self.euler_from_quaternion(self.carrot_pose.pose.orientation.x, self.carrot_pose.pose.orientation.y, self.carrot_pose.pose.orientation.z, self.carrot_pose.pose.orientation.w)
-		_, _, final_yaw = self.euler_from_quaternion(self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w)
-		_, _, odom_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.goal_pose.orientation.w)
+		_, _, initial_world_yaw = self.euler_from_quaternion(self.current_pose.pose.orientation.x, self.current_pose.pose.orientation.y, self.current_pose.pose.orientation.z, self.current_pose.pose.orientation.w)
 		_, _, terminal_yaw = self.euler_from_quaternion(self.carrot_pose_terminal.pose.orientation.x, self.carrot_pose_terminal.pose.orientation.y, self.carrot_pose_terminal.pose.orientation.z, self.carrot_pose_terminal.pose.orientation.w)
 
-		pos_x = self.current_pose.pose.position.x
-		pos_y = self.current_pose.pose.position.y
+		initial_world_x = self.current_pose.pose.position.x
+		initial_world_y = self.current_pose.pose.position.y
+		cos_initial_yaw = np.cos(initial_world_yaw)
+		sin_initial_yaw = np.sin(initial_world_yaw)
 
-		update_footprint = PolygonStamped()
-		update_footprint.header = self.footprint.header
-		update_footprint.polygon.points = [
-		    Point32(x=p.x, y=p.y, z=p.z) for p in self.footprint.polygon.points
-		]
 		for i in range((self.no_ctrl_steps)):
 			self.costmap_cost = 0
 
@@ -292,9 +289,8 @@ class MpcOptimizationServer(Node):
 			self.x += (cmd_vel[0+3*i]*np.cos(self.z)* self.dt - cmd_vel[1+3*i]*np.sin(self.z)* self.dt) 
 			self.y += (cmd_vel[0+3*i]*np.sin(self.z)* self.dt + cmd_vel[1+3*i]*np.cos(self.z)* self.dt)
 			
-			odom_yaw += cmd_vel[2+3*i] * self.dt 
-			pos_x += cmd_vel[0+3*i] *np.cos(odom_yaw) *  self.dt  - cmd_vel[1+3*i] * np.sin(odom_yaw) *  self.dt
-			pos_y += cmd_vel[0+3*i] *np.sin(odom_yaw) *  self.dt  + cmd_vel[1+3*i] * np.cos(odom_yaw) *  self.dt
+			pos_x = initial_world_x + cos_initial_yaw * self.x - sin_initial_yaw * self.y
+			pos_y = initial_world_y + sin_initial_yaw * self.x + cos_initial_yaw * self.y
 			
 			# Check distance to nearest obstacle for adaptive behavior
 			# Use center point for this general context switch
@@ -354,19 +350,6 @@ class MpcOptimizationServer(Node):
 			self.cost_total += ((self.w_trans * step_dist_error**2) + (self.w_orient * step_orient_error**2)) / self.no_ctrl_steps            
 			self.cost_total += self.w_control * (np.linalg.norm(np.array((self.current_velocity.linear.x , self.current_velocity.linear.y, \
 			self.current_velocity.angular.z )) - np.array((cmd_vel[0+3*i], cmd_vel[1+3*i], cmd_vel[2+3*i]))))  / self.no_ctrl_steps
-
-			# Transform footprint to WORLD frame using WORLD coordinates
-			for j in range(0, len(update_footprint.polygon.points)):
-				
-				# Transform to world frame using world position and orientation
-				update_footprint.polygon.points[j].x += (cmd_vel[0+3*i]*np.cos(self.z)* self.dt - cmd_vel[1+3*i]*np.sin(self.z)* self.dt) 
-				update_footprint.polygon.points[j].y += (cmd_vel[0+3*i]*np.sin(self.z)* self.dt + cmd_vel[1+3*i]*np.cos(self.z)* self.dt)
-
-			# mx1, my1 = self.costmap_ros.getWorldToMap(pos_x, pos_y)
-			# self.footprint_cost = self.costmap_ros.getFootprintCost(update_footprint.polygon)
-
-			# Footprint collision cost
-			# self.cost_total += self.footprint_cost
 
 		# iii) terminal cost
 		# Use carrot_pose_terminal (far lookahead) for terminal cost to avoid redundancy
@@ -520,16 +503,49 @@ class MpcOptimizationServer(Node):
 
 		x = minimize(self.objective, self.initial_guess,
 				method='SLSQP',bounds= self.bnds, constraints = self.cons, options={'ftol':self.opt_tolerance,'disp':False})		
+
+		# Never execute a failed or invalid optimizer result. SciPy may still
+		# populate x when SLSQP terminates unsuccessfully, but that candidate is
+		# not guaranteed to satisfy the configured bounds and constraints.
+		expected_solution_size = self.no_ctrl_steps * 3
+		solution = np.asarray(getattr(x, 'x', []), dtype=float)
+		solver_result_valid = (
+			x.success and
+			solution.shape == (expected_solution_size,) and
+			np.all(np.isfinite(solution)) and
+			np.isfinite(getattr(x, 'fun', np.nan)))
+
+		if not solver_result_valid:
+			self.solver_failure_count += 1
+			now = time.monotonic()
+			if now - self.last_solver_failure_log_time >= 1.0:
+				self.get_logger().error(
+					'SLSQP result rejected: '
+					f'status={getattr(x, "status", "unknown")}, '
+					f'message={getattr(x, "message", "unknown")}, '
+					f'consecutive_failures={self.solver_failure_count}')
+				self.last_solver_failure_log_time = now
+
+			response.output_vel.twist.linear.x = 0.0
+			response.output_vel.twist.linear.y = 0.0
+			response.output_vel.twist.angular.z = 0.0
+			self.last_control = [0.0, 0.0, 0.0]
+			self.initial_guess = np.zeros(expected_solution_size)
+			self.old_goal = self.goal_pose
+			return response
+
+		self.solver_failure_count = 0
 		
-		# NEW: Publish debug footprints after optimization
-		self.publishDebugFootprints(x.x)
+		# Predicted footprint publishing is disabled while its frame handling is
+		# validated independently from the controller output.
+		# self.publishDebugFootprints(solution)
 
 		# Check collision
-		# self.collision_check(x.x)
+		# self.collision_check(solution)
 		
-		self.publishLocalPlan(x.x)
+		self.publishLocalPlan(solution)
 		for i in range(0,3):
-			x.x[i] = x.x[i] * self.low_pass_gain + self.last_control[i] * (1 - self.low_pass_gain)
+			solution[i] = solution[i] * self.low_pass_gain + self.last_control[i] * (1 - self.low_pass_gain)
 
 		current_time = time.time()
 		delta_t = current_time - self.last_time
@@ -544,9 +560,9 @@ class MpcOptimizationServer(Node):
 				self.collision = False
 				self.waiting_time = 0.0
 		else:
-			temp_x = np.fmin(x.x[0], self.last_control[0] + self.acc_x_limit * self.control_interval)
-			temp_y = np.fmin(x.x[1], self.last_control[1] + self.acc_y_limit * self.control_interval) 
-			temp_z = np.fmin(x.x[2], self.last_control[2] + self.acc_theta_limit * self.control_interval)
+			temp_x = np.fmin(solution[0], self.last_control[0] + self.acc_x_limit * self.control_interval)
+			temp_y = np.fmin(solution[1], self.last_control[1] + self.acc_y_limit * self.control_interval)
+			temp_z = np.fmin(solution[2], self.last_control[2] + self.acc_theta_limit * self.control_interval)
 
 			response.output_vel.twist.linear.x = np.fmax(temp_x, self.last_control[0] - self.acc_x_limit * self.control_interval)
 			response.output_vel.twist.linear.y = np.fmax(temp_y, self.last_control[1] - self.acc_y_limit * self.control_interval) 
@@ -556,10 +572,7 @@ class MpcOptimizationServer(Node):
 		self.last_control[1] = response.output_vel.twist.linear.y 
 		self.last_control[2] = response.output_vel.twist.angular.z
 
-		if (x.success):
-			self.initial_guess = self.initial_guess_update(self.initial_guess, x.x)
-		else:
-			self.initial_guess = x.x
+		self.initial_guess = self.initial_guess_update(self.initial_guess, solution)
 
 		self.old_goal = self.goal_pose
 		return response

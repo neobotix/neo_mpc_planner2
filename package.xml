@@ -20,22 +20,28 @@
     <exec_depend>costmap_converter</exec_depend>
     <exec_depend>costmap_converter_msgs</exec_depend>
 
-    <exec_depend>geometry_msgs</exec_depend>
+    <depend>angles</depend>
+    <depend>geometry_msgs</depend>
     <exec_depend>libg2o</exec_depend>
     <exec_depend>dwb_critics</exec_depend>
-    <exec_depend>nav2_core</exec_depend>
-    <exec_depend>nav2_costmap_2d</exec_depend>
+    <depend>nav2_core</depend>
+    <depend>nav2_costmap_2d</depend>
     <exec_depend>nav2_msgs</exec_depend>
-    <exec_depend>nav2_util</exec_depend>
-    <exec_depend>pluginlib</exec_depend>
-    <exec_depend>rclcpp</exec_depend>
+    <depend>nav2_util</depend>
+    <depend>pluginlib</depend>
+    <depend>rcl_interfaces</depend>
+    <depend>rclcpp</depend>
     <depend>rclpy</depend>
     <exec_depend>rclcpp_action</exec_depend>
-    <exec_depend>rclcpp_lifecycle</exec_depend>
+    <depend>rclcpp_lifecycle</depend>
     <exec_depend>std_msgs</exec_depend>
-    <exec_depend>tf2_ros</exec_depend>
+    <depend>tf2</depend>
+    <depend>tf2_eigen</depend>
+    <depend>tf2_geometry_msgs</depend>
+    <depend>tf2_ros</depend>
+    <depend>tf2_sensor_msgs</depend>
     <exec_depend>visualization_msgs</exec_depend>
-    <exec_depend>neo_srvs2</exec_depend>
+    <depend>neo_srvs2</depend>
     <exec_depend>nav2_bringup</exec_depend>
     <export>
         <build_type>ament_cmake</build_type>
@@ -43,5 +49,3 @@
     </export>
 
 </package>
-
-
