@@ -352,11 +352,11 @@ class MpcOptimizationServer(Node):
 
 		return q
 
-	def initial_guess_update(self, init_guess,guess):
-		for i in range(0, self.no_ctrl_steps-1):
-			init_guess[0+3*i:3+3*i] = guess[3+3*i:6+3*i]
-		init_guess[0+3*(self.no_ctrl_steps-1):3+3*(self.no_ctrl_steps-1)] = guess[0:3]
-		return init_guess
+	def initial_guess_update(self, guess):
+		shifted_guess = np.empty_like(guess)
+		shifted_guess[:-3] = guess[3:]
+		shifted_guess[-3:] = guess[-3:]
+		return shifted_guess
 
 
 	# objective function: Distance calculation should be all done in the local frame of the robot
@@ -716,7 +716,7 @@ class MpcOptimizationServer(Node):
 		self.last_control[1] = response.output_vel.twist.linear.y 
 		self.last_control[2] = response.output_vel.twist.angular.z
 
-		self.initial_guess = self.initial_guess_update(self.initial_guess, solution)
+		self.initial_guess = self.initial_guess_update(solution)
 
 		self.old_goal = self.goal_pose
 		return response
